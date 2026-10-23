@@ -23,6 +23,10 @@ class Prefs(c: Context) {
 
     // vídeo
     var orient get() = s("orient", "auto"); set(v) = put("orient", v)          // auto | retrato | paisagem
+    var ratio get() = s("ratio", "Original 3:2"); set(v) = put("ratio", v)      // Original 3:2 | 4:3 | 16:9 | Tela cheia
+    /** Posição/tamanho da tela por orientação: [x, y, s] ou null (padrão). */
+    fun screenRect(land: Boolean): FloatArray? = s(if (land) "scrL" else "scrP", "").split(",").mapNotNull { it.toFloatOrNull() }.takeIf { it.size == 3 }?.toFloatArray()
+    fun saveScreenRect(land: Boolean, r: FloatArray?) = put(if (land) "scrL" else "scrP", r?.joinToString(",") ?: "")
     var linear get() = b("linear", false); set(v) = put("linear", v)           // chave já existente
     var scale get() = i("scale", 3); set(v) = put("scale", v)                  // chave já existente
     // áudio

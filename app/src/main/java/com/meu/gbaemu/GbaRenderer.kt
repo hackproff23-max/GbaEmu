@@ -19,6 +19,9 @@ class GbaRenderer(private val ctx: Context, private val emu: Emulator, private v
     @Volatile var scale = 3
     @Volatile var linear = false
     @Volatile var dirty = true
+    @Volatile var ratio = "Original 3:2"
+    @Volatile var rectPort: FloatArray? = null
+    @Volatile var rectLand: FloatArray? = null
 
     private class U(val loc: Int, val name: String, val type: Int)
     private class Pass(val prog: Int, val uniforms: List<U>)
@@ -74,10 +77,17 @@ class GbaRenderer(private val ctx: Context, private val emu: Emulator, private v
                 GLES20.glTexSubImage2D(GLES20.GL_TEXTURE_2D, 0, 0, 0, w, h, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, b)
             }
         }
-        // retângulo de destino (3:2): topo em retrato, centralizado em paisagem
-        val aspect = srcW.toFloat() / srcH
-        var dw: Int; var dh: Int; val dx: Int; val dy: Int
-        if (surfH >= surfW) { dw = surfW; dh = (dw / aspect).toInt(); dx = 0; dy = surfH - dh }
+        // retângulo de destino: proporção escolhida + posição/tamanho do editor de tela (por orientação)
+        val land = surfW > surfH
+        val aspect = when (ratio) { "4:3" -> 4f / 3; "16:9" -> 16f / 9; else -> srcW.toFloat() / srcH }
+        val r = if (land) rectLand else rectPort
+        var dw: Int; var dh: Int; var dx: Int; var dy: Int
+        if (ratio == "Tela cheia") { dw = surfW; dh = surfH; dx = 0; dy = 0 }
+        else if (r != null) {
+            dw = (r[2] * surfW).toInt().coerceIn(1, surfW); dh = (dw / aspect).toInt()
+            if (dh > surfH) { dh = surfH; dw = (dh * aspect).toInt() }
+            dx = (r[0] * (surfW - dw)).toInt(); dy = surfH - dh - (r[1] * (surfH - dh)).toInt()
+        } else if (!land) { dw = surfW; dh = (dw / aspect).toInt(); dx = 0; dy = surfH - dh }
         else {
             dh = surfH; dw = (dh * aspect).toInt()
             if (dw > surfW) { dw = surfW; dh = (dw / aspect).toInt() }

@@ -56,12 +56,38 @@ class SettingsActivity : Activity() {
         }
     }
 
+    private var editLand = false
+
     private fun video(col: LinearLayout) {
         val names = mapOf("auto" to "Automático", "retrato" to "Retrato", "paisagem" to "Paisagem")
         col.addView(T.h(this, "Orientação do jogo"))
         col.addView(T.chips(this, names.values.toList(), names[p.orient]!!) { n -> p.orient = names.entries.first { it.value == n }.key; show("video") })
-        col.addView(T.h(this, "Escala interna das shaders"))
+        col.addView(T.h(this, "Proporção da tela"))
+        val ratios = listOf("Original 3:2", "4:3", "16:9", "Tela cheia")
+        col.addView(T.chips(this, ratios, p.ratio) { p.ratio = it; show("video") })
+        col.addView(T.h(this, "Editor de tela"))
+        if (p.ratio == "Tela cheia") {
+            col.addView(T.note(this, "Tela cheia ocupa a tela inteira; não há posição para editar."))
+        } else {
+            col.addView(T.note(this, "Escolha a direção, arraste a tela dourada e ajuste o tamanho. Cada direção tem a sua posição."))
+            col.addView(T.chips(this, listOf("Retrato", "Paisagem"), if (editLand) "Paisagem" else "Retrato") { editLand = it == "Paisagem"; show("video") })
+            val dm = resources.displayMetrics; val shortS = minOf(dm.widthPixels, dm.heightPixels); val longS = maxOf(dm.widthPixels, dm.heightPixels)
+            val avail = dm.widthPixels - T.dp(this, 32)
+            val sw = if (editLand) avail else (avail * 0.55f).toInt()
+            val sh = if (editLand) sw * shortS / longS else sw * longS / shortS
+            val ar = when (p.ratio) { "4:3" -> 4f / 3; "16:9" -> 16f / 9; else -> 1.5f }
+            val saved = p.screenRect(editLand)
+            val def = if (editLand) floatArrayOf(.5f, .5f, minOf(1f, sh * ar / sw)) else floatArrayOf(0f, 0f, 1f)
+            val r = saved ?: def
+            val ev = EditorView(this, r[0], r[1], r[2], ar)
+            ev.onChange = { p.saveScreenRect(editLand, floatArrayOf(ev.x, ev.y, ev.s)) }
+            col.addView(ev, LinearLayout.LayoutParams(sw, sh).apply { topMargin = T.dp(this@SettingsActivity, 10); bottomMargin = T.dp(this@SettingsActivity, 6); gravity = Gravity.CENTER_HORIZONTAL })
+            col.addView(T.seek(this, "Tamanho da tela", 30, 100, (r[2] * 100).toInt().coerceIn(30, 100)) { v -> ev.s = v / 100f; ev.invalidate(); p.saveScreenRect(editLand, floatArrayOf(ev.x, ev.y, ev.s)) })
+            col.addView(btn("Restaurar posição padrão", false) { p.saveScreenRect(editLand, null); show("video") })
+        }
+        col.addView(T.h(this, "Imagem"))
         col.addView(T.chips(this, (1..6).map { "${it}x" }, "${p.scale}x") { p.scale = it.dropLast(1).toInt(); show("video") })
+        col.addView(T.note(this, "Escala interna das shaders."))
         col.addView(T.switchRow(this, "Filtro bilinear (suave)", p.linear) { p.linear = it })
         col.addView(T.note(this, "Vale na próxima vez que você abrir um jogo."))
     }

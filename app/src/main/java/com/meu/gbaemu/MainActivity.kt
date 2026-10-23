@@ -67,6 +67,7 @@ class MainActivity : Activity() {
         renderer = GbaRenderer(this, emu) { msg -> toast(msg) }
         renderer.scale = prefs.getInt("scale", 3)
         renderer.linear = prefs.getBoolean("linear", false)
+        renderer.ratio = ui.ratio; renderer.rectPort = ui.screenRect(false); renderer.rectLand = ui.screenRect(true)
         renderer.shaderKeys = when (val sh = gid?.let { ui.shaderFor(it) } ?: SH_GLOBAL) {
             SH_GLOBAL -> enabledShaders()
             SH_NONE -> emptyList()
