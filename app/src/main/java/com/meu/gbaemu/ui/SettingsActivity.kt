@@ -80,9 +80,9 @@ class SettingsActivity : Activity() {
             val def = if (editLand) floatArrayOf(.5f, .5f, minOf(1f, sh * ar / sw)) else floatArrayOf(0f, 0f, 1f)
             val r = saved ?: def
             val ev = EditorView(this, r[0], r[1], r[2], ar)
-            ev.onChange = { p.saveScreenRect(editLand, floatArrayOf(ev.x, ev.y, ev.s)) }
+            ev.onChange = { p.saveScreenRect(editLand, floatArrayOf(ev.px, ev.py, ev.s)) }
             col.addView(ev, LinearLayout.LayoutParams(sw, sh).apply { topMargin = T.dp(this@SettingsActivity, 10); bottomMargin = T.dp(this@SettingsActivity, 6); gravity = Gravity.CENTER_HORIZONTAL })
-            col.addView(T.seek(this, "Tamanho da tela", 30, 100, (r[2] * 100).toInt().coerceIn(30, 100)) { v -> ev.s = v / 100f; ev.invalidate(); p.saveScreenRect(editLand, floatArrayOf(ev.x, ev.y, ev.s)) })
+            col.addView(T.seek(this, "Tamanho da tela", 30, 100, (r[2] * 100).toInt().coerceIn(30, 100)) { v -> ev.s = v / 100f; ev.invalidate(); p.saveScreenRect(editLand, floatArrayOf(ev.px, ev.py, ev.s)) })
             col.addView(btn("Restaurar posição padrão", false) { p.saveScreenRect(editLand, null); show("video") })
         }
         col.addView(T.h(this, "Imagem"))

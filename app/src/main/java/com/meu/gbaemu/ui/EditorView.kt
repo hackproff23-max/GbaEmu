@@ -7,7 +7,7 @@ import android.view.View
 
 /** Palco que simula a tela do celular; o retângulo dourado é a tela do jogo (arraste para mover).
  *  Mesma geometria do GbaRenderer: largura = s * palco, posição = fração do espaço livre. */
-class EditorView(c: Context, var x: Float, var y: Float, var s: Float, var ar: Float) : View(c) {
+class EditorView(c: Context, var px: Float, var py: Float, var s: Float, var ar: Float) : View(c) {
     var onChange: (() -> Unit)? = null
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF2A2208.toInt() }
     private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = T.dp(c, 2).toFloat(); color = T.GOLD }
@@ -17,7 +17,7 @@ class EditorView(c: Context, var x: Float, var y: Float, var s: Float, var ar: F
     private fun rect(): RectF {
         var w = s * width; var h = w / ar
         if (h > height) { h = height.toFloat(); w = h * ar }
-        val l = x * (width - w).coerceAtLeast(0f); val t = y * (height - h).coerceAtLeast(0f)
+        val l = px * (width - w).coerceAtLeast(0f); val t = py * (height - h).coerceAtLeast(0f)
         return RectF(l, t, l + w, t + h)
     }
 
@@ -33,7 +33,7 @@ class EditorView(c: Context, var x: Float, var y: Float, var s: Float, var ar: F
             MotionEvent.ACTION_DOWN -> { val r = rect(); drag = r.contains(e.x, e.y); dx = e.x - r.left; dy = e.y - r.top }
             MotionEvent.ACTION_MOVE -> if (drag) {
                 val r = rect(); val fx = (width - r.width()).coerceAtLeast(1f); val fy = (height - r.height()).coerceAtLeast(1f)
-                x = ((e.x - dx) / fx).coerceIn(0f, 1f); y = ((e.y - dy) / fy).coerceIn(0f, 1f); invalidate()
+                px = ((e.x - dx) / fx).coerceIn(0f, 1f); py = ((e.y - dy) / fy).coerceIn(0f, 1f); invalidate()
             }
             MotionEvent.ACTION_UP -> { if (drag) onChange?.invoke(); drag = false }
         }
