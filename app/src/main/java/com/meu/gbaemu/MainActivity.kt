@@ -50,7 +50,7 @@ class MainActivity : Activity() {
         val gid = intent.getStringExtra("game_id")
         editOnly = intent.getBooleanExtra("edit_layout", false)
         profile = intent.getStringExtra("profile") ?: gid?.let { ui.kbFor(it) } ?: KB_PROFILES[0]
-        requestedOrientation = if (editOnly) ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR else when (ui.orient) {
+        requestedOrientation = if (editOnly) ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR else when (ui.orientFor(gid)) {
             "retrato" -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             "paisagem" -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
             else -> ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
@@ -62,12 +62,12 @@ class MainActivity : Activity() {
         }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         emu = Emulator(this) { glView.requestRender() }
-        emu.ffMul = ui.ffMultiplier
-        emu.volume = if (ui.mute) 0f else ui.volume / 100f
+        emu.ffMul = ui.ffMultiplierFor(gid); emu.ffAudio = ui.ffAudio
+        emu.volume = if (ui.mute) 0f else ui.volumeFor(gid) / 100f
         renderer = GbaRenderer(this, emu) { msg -> toast(msg) }
         renderer.scale = prefs.getInt("scale", 3)
         renderer.linear = prefs.getBoolean("linear", false)
-        renderer.ratio = ui.ratio; renderer.rectPort = ui.screenRect(false); renderer.rectLand = ui.screenRect(true)
+        renderer.ratio = ui.ratioFor(gid); renderer.rectPort = ui.screenRect(false); renderer.rectLand = ui.screenRect(true)
         renderer.shaderKeys = when (val sh = gid?.let { ui.shaderFor(it) } ?: SH_GLOBAL) {
             SH_GLOBAL -> enabledShaders()
             SH_NONE -> emptyList()

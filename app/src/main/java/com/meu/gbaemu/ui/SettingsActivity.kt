@@ -139,7 +139,9 @@ class SettingsActivity : Activity() {
     private fun adv(col: LinearLayout) {
         col.addView(T.h(this, "Velocidade do fast-forward"))
         col.addView(T.chips(this, FF_STEPS, p.ff) { p.ff = it; show("adv") })
-        col.addView(T.note(this, "Liga e desliga pelo menu do jogo (Acelerar). Máx. = 16x. Vale na próxima vez que você abrir um jogo."))
+        col.addView(T.note(this, "Liga e desliga pelo menu do jogo (Acelerar). Máx. = 16x. Cada jogo pode ter a sua velocidade na Biblioteca (segure o jogo). Vale na próxima vez que você abrir um jogo."))
+        col.addView(T.switchRow(this, "Som durante o fast-forward", p.ffAudio) { p.ffAudio = it })
+        col.addView(T.note(this, "O som acelera junto com o jogo (fica mais agudo). Desligue se preferir silêncio ao acelerar."))
         col.addView(T.h(this, "Biblioteca"))
         col.addView(btn("Limpar lista de jogos", false) {
             AlertDialog.Builder(this, AlertDialog.THEME_DEVICE_DEFAULT_DARK).setTitle("Limpar a lista?").setMessage("Os arquivos e os saves não são apagados.")

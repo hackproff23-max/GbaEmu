@@ -11,6 +11,7 @@ class Emulator(private val ctx: Context, private val onFrame: () -> Unit) {
     @Volatile var paused = false
     @Volatile var fast = false
     @Volatile var ffMul = 4
+    @Volatile var ffAudio = true
     @Volatile var volume = 1f
     @Volatile var baseMask = 0
     private var frame = 0L
@@ -46,19 +47,45 @@ class Emulator(private val ctx: Context, private val onFrame: () -> Unit) {
 
     private fun loop(t: AudioTrack) {
         val buf = ShortArray(16384)
+        val acc = ShortArray(16 * 4096)
         t.play()
         while (running) {
             if (paused) { Thread.sleep(20); continue }
-            val n = if (fast) ffMul else 1
-            synchronized(lock) { repeat(n) { Native.setInput(mixed()); Native.run(); frame++ } }
-            onFrame()
-            if (fast) Native.clearAudio()
-            else {
+            if (!fast) {
+                synchronized(lock) { Native.setInput(mixed()); Native.run(); frame++ }
+                onFrame()
                 val c = Native.audio(buf)
                 if (c > 0) {
                     val v = volume
                     if (v < 1f) for (i in 0 until c) buf[i] = (buf[i] * v).toInt().toShort()
                     t.write(buf, 0, c) // bloqueante: dá o ritmo de 60 fps
+                }
+            } else {
+                val n = ffMul.coerceIn(2, 16)
+                var total = 0
+                synchronized(lock) {
+                    repeat(n) {
+                        Native.setInput(mixed()); Native.run(); frame++
+                        if (ffAudio) {
+                            val c = Native.audio(buf) // esvazia o áudio a cada quadro
+                            if (c > 0 && total + c <= acc.size) { System.arraycopy(buf, 0, acc, total, c); total += c }
+                        } else Native.clearAudio()
+                    }
+                }
+                onFrame()
+                if (ffAudio) {
+                    // junta n quadros de som em ~1 quadro (média de n amostras): o som acelera junto, mais agudo
+                    val pairs = minOf(total / 2 / n, buf.size / 2)
+                    if (pairs > 0) {
+                        val v = volume
+                        for (k in 0 until pairs) {
+                            var l = 0; var r = 0
+                            for (j in 0 until n) { val ix = (k * n + j) * 2; l += acc[ix]; r += acc[ix + 1] }
+                            buf[2 * k] = (l / n * v).toInt().coerceIn(-32768, 32767).toShort()
+                            buf[2 * k + 1] = (r / n * v).toInt().coerceIn(-32768, 32767).toShort()
+                        }
+                        t.write(buf, 0, pairs * 2) // bloqueante: mantém o ritmo (n x velocidade)
+                    }
                 }
             }
         }

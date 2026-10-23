@@ -40,6 +40,7 @@ class Prefs(c: Context) {
     var showTurboA get() = b("showTA", true); set(v) = put("showTA", v)
     var showTurboB get() = b("showTB", true); set(v) = put("showTB", v)
     // avançado
+    var ffAudio get() = b("ffAudio", true); set(v) = put("ffAudio", v)
     var ff get() = s("ff", "4x"); set(v) = put("ff", v)
     val ffMultiplier get() = if (ff == "Máx.") 16 else ff.dropLast(1).toIntOrNull() ?: 4
 
@@ -69,6 +70,20 @@ class Prefs(c: Context) {
     fun clearLibrary() = put("lib", "")
 
     // por jogo (id = nome do arquivo)
+    /** Valor próprio do jogo para a chave, ou null = usar o padrão das configurações. */
+    fun gameVal(id: String?, k: String): String? = id?.let { sp.getString("g.$it.$k", null) }
+    fun setG(id: String, k: String, v: String?) = sp.edit().apply { if (v == null) remove("g.$id.$k") else putString("g.$id.$k", v) }.apply()
+    fun orientFor(id: String?) = gameVal(id, "orient") ?: orient
+    fun ratioFor(id: String?) = gameVal(id, "ratio") ?: ratio
+    fun ffFor(id: String?) = gameVal(id, "ff") ?: ff
+    fun ffMultiplierFor(id: String?): Int { val f = ffFor(id); return if (f == "Máx.") 16 else f.dropLast(1).toIntOrNull() ?: 4 }
+    fun volumeFor(id: String?) = gameVal(id, "vol")?.toIntOrNull() ?: volume
+    fun resetGame(id: String) = sp.edit().apply { listOf("sh", "kb", "orient", "ratio", "ff", "vol").forEach { remove("g.$id.$it") } }.apply()
+
+    // capa do jogo (imagem copiada para dentro do app)
+    var pendingCover get() = s("pendingCover", ""); set(v) = put("pendingCover", v)
+    fun coverFile(id: String) = File(File(ctx.filesDir, "covers").also { it.mkdirs() }, id.replace(Regex("[^A-Za-z0-9._-]"), "_") + ".jpg")
+
     fun shaderFor(id: String) = s("g.$id.sh", SH_GLOBAL)
     fun setShader(id: String, v: String) = put("g.$id.sh", v)
     fun kbFor(id: String) = s("g.$id.kb", KB_PROFILES[0])
