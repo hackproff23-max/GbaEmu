@@ -10,9 +10,16 @@ import android.widget.*
 
 /** Tema preto e dourado + helpers de UI (sem dependências externas). */
 object T {
-    const val BG = 0xFF000000.toInt(); const val CARD = 0xFF101010.toInt(); const val LINE = 0xFF3B3112.toInt()
-    const val GOLD = 0xFFD4AF37.toInt(); const val GOLD2 = 0xFFF5D77A.toInt()
-    const val TX = 0xFFF3EAD0.toInt(); const val MUT = 0xFF9A8A5A.toInt()
+    // cores editáveis (Configurações > Avançado > Cores); carregadas pelo Prefs
+    var BG = 0xFF000000.toInt(); var CARD = 0xFF101010.toInt(); var LINE = 0xFF3B3112.toInt()
+    var GOLD = 0xFFD4AF37.toInt(); var GOLD2 = 0xFFF5D77A.toInt()
+    var TX = 0xFFF3EAD0.toInt(); var MUT = 0xFF9A8A5A.toInt()
+    var font: Typeface? = null
+    val DEF = mapOf("BG" to 0xFF000000.toInt(), "CARD" to 0xFF101010.toInt(), "LINE" to 0xFF3B3112.toInt(), "GOLD" to 0xFFD4AF37.toInt(),
+        "GOLD2" to 0xFFF5D77A.toInt(), "TX" to 0xFFF3EAD0.toInt(), "MUT" to 0xFF9A8A5A.toInt())
+    fun get(k: String): Int = when (k) { "BG" -> BG; "CARD" -> CARD; "LINE" -> LINE; "GOLD" -> GOLD; "GOLD2" -> GOLD2; "TX" -> TX; else -> MUT }
+    fun set(k: String, v: Int) { when (k) { "BG" -> BG = v; "CARD" -> CARD = v; "LINE" -> LINE = v; "GOLD" -> GOLD = v; "GOLD2" -> GOLD2 = v; "TX" -> TX = v; else -> MUT = v } }
+    fun sig(): Int = listOf(BG, CARD, LINE, GOLD, GOLD2, TX, MUT, font?.hashCode() ?: 0).hashCode()
 
     fun dp(c: Context, v: Int) = (v * c.resources.displayMetrics.density).toInt()
 
@@ -21,7 +28,7 @@ object T {
     }
 
     fun text(c: Context, s: String, sp: Float = 15f, col: Int = TX, bold: Boolean = false) =
-        TextView(c).apply { text = s; textSize = sp; setTextColor(col); if (bold) setTypeface(typeface, Typeface.BOLD) }
+        TextView(c).apply { text = s; textSize = sp; setTextColor(col); setTypeface(font ?: Typeface.DEFAULT, if (bold) Typeface.BOLD else Typeface.NORMAL) }
 
     fun chip(c: Context, s: String, on: Boolean, click: () -> Unit) =
         text(c, s, 13f, if (on) BG else MUT, on).apply {

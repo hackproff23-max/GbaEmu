@@ -1,9 +1,13 @@
 package com.meu.gbaemu.ui
 
 import android.content.Context
+import android.graphics.Typeface
 import java.io.File
 
 val KB_PROFILES = listOf("Padrão", "Perfil 2", "Perfil 3", "Perfil 4")
+val AUTO_STEPS = listOf("Desligado", "30 s", "1 min", "2 min", "5 min")
+val COLOR_KEYS = listOf("BG", "CARD", "LINE", "GOLD", "GOLD2", "TX", "MUT")
+val COLOR_NAMES = listOf("Fundo", "Cartões", "Bordas", "Destaque", "Destaque claro", "Texto", "Texto secundário")
 val FF_STEPS = listOf("2x", "3x", "4x", "6x", "8x", "Máx.")
 const val SH_GLOBAL = "@global"
 const val SH_NONE = "@none"
@@ -14,6 +18,10 @@ data class Game(val id: String, val name: String, val uri: String)
 class Prefs(c: Context) {
     private val ctx = c.applicationContext
     private val sp = ctx.getSharedPreferences("gba", Context.MODE_PRIVATE)
+    init {
+        COLOR_KEYS.forEach { T.set(it, sp.getInt("c.$it", T.DEF.getValue(it))) }
+        T.font = loadFont()
+    }
     private fun s(k: String, d: String) = sp.getString(k, d) ?: d
     private fun i(k: String, d: Int) = sp.getInt(k, d)
     private fun b(k: String, d: Boolean) = sp.getBoolean(k, d)
@@ -40,9 +48,32 @@ class Prefs(c: Context) {
     var showTurboA get() = b("showTA", true); set(v) = put("showTA", v)
     var showTurboB get() = b("showTB", true); set(v) = put("showTB", v)
     // avançado
+    var autoSave get() = s("autoSave", "2 min"); set(v) = put("autoSave", v)
+    val autoSaveMs: Long get() = when (autoSave) { "30 s" -> 30_000L; "1 min" -> 60_000L; "2 min" -> 120_000L; "5 min" -> 300_000L; else -> 0L }
+    var autoResume get() = b("autoResume", false); set(v) = put("autoResume", v)
     var ffAudio get() = b("ffAudio", true); set(v) = put("ffAudio", v)
     var ff get() = s("ff", "4x"); set(v) = put("ff", v)
     val ffMultiplier get() = if (ff == "Máx.") 16 else ff.dropLast(1).toIntOrNull() ?: 4
+
+    // aparência: cores (RGB) e fonte do app
+    fun setColor(k: String, v: Int) { put("c.$k", v); T.set(k, v) }
+    fun resetColors() { sp.edit().apply { COLOR_KEYS.forEach { remove("c.$it") } }.apply(); COLOR_KEYS.forEach { T.set(it, T.DEF.getValue(it)) } }
+    fun fontFile() = File(ctx.filesDir, "font.ttf")
+    fun hasFont() = fontFile().exists()
+    fun loadFont(): Typeface? = fontFile().takeIf { it.exists() }?.let { try { Typeface.createFromFile(it) } catch (e: Exception) { null } }
+    /** Copia a fonte (.ttf/.otf) para dentro do app, só se o cabeçalho do arquivo for de fonte. */
+    fun importFont(input: java.io.InputStream): Boolean {
+        val tmp = File(ctx.filesDir, "font.tmp")
+        tmp.outputStream().use { o -> input.copyTo(o) }
+        val head = ByteArray(4)
+        val n = tmp.inputStream().use { it.read(head) }
+        val ok = n == 4 && (head.contentEquals(byteArrayOf(0, 1, 0, 0)) || String(head, Charsets.ISO_8859_1) in listOf("true", "OTTO", "ttcf"))
+        if (!ok) { tmp.delete(); return false }
+        fontFile().delete(); tmp.renameTo(fontFile())
+        T.font = loadFont()
+        return T.font != null
+    }
+    fun clearFont() { fontFile().delete(); T.font = null }
 
     // shaders (usa a mesma pasta e a mesma chave "sh_on" do app)
     fun shaderDir() = File(ctx.filesDir, "shaders").also { it.mkdirs() }

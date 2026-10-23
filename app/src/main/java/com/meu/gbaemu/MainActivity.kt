@@ -10,7 +10,14 @@ import com.meu.gbaemu.ui.SH_NONE
 import com.meu.gbaemu.ui.SettingsActivity
 import com.meu.gbaemu.ui.Prefs as UiPrefs
 import android.content.SharedPreferences
+import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.text.format.DateFormat
+import android.view.Gravity
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
 import android.net.Uri
 import android.opengl.GLSurfaceView
 import android.os.Build
@@ -30,6 +37,7 @@ import java.util.zip.ZipInputStream
 
 class MainActivity : Activity() {
     private lateinit var emu: Emulator
+    private lateinit var uiP: UiPrefs
     private lateinit var glView: GLSurfaceView
     private lateinit var renderer: GbaRenderer
     private lateinit var controls: ControlsView
@@ -46,7 +54,8 @@ class MainActivity : Activity() {
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
         prefs = getSharedPreferences("gba", MODE_PRIVATE)
-        val ui = UiPrefs(this)
+        uiP = UiPrefs(this)
+        val ui = uiP
         val gid = intent.getStringExtra("game_id")
         editOnly = intent.getBooleanExtra("edit_layout", false)
         profile = intent.getStringExtra("profile") ?: gid?.let { ui.kbFor(it) } ?: KB_PROFILES[0]
@@ -62,7 +71,7 @@ class MainActivity : Activity() {
         }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         emu = Emulator(this) { glView.requestRender() }
-        emu.ffMul = ui.ffMultiplierFor(gid); emu.ffAudio = ui.ffAudio
+        emu.ffMul = ui.ffMultiplierFor(gid); emu.ffAudio = ui.ffAudio; emu.autoEveryMs = ui.autoSaveMs
         emu.volume = if (ui.mute) 0f else ui.volumeFor(gid) / 100f
         renderer = GbaRenderer(this, emu) { msg -> toast(msg) }
         renderer.scale = prefs.getInt("scale", 3)
@@ -122,11 +131,14 @@ class MainActivity : Activity() {
         return u.lastPathSegment?.substringAfterLast('/') ?: "arquivo"
     }
 
-    private fun showDlg(b: AlertDialog.Builder) {
+    private fun showDlg(b: AlertDialog.Builder) { showDlgGet(b) }
+
+    private fun showDlgGet(b: AlertDialog.Builder): AlertDialog {
         openDialogs++; emu.paused = true
         val d = b.create()
         d.setOnDismissListener { openDialogs--; if (openDialogs <= 0) { openDialogs = 0; emu.paused = false }; immersive() }
         d.show()
+        return d
     }
 
     private fun pick(req: Int, multiple: Boolean) {
@@ -169,7 +181,9 @@ class MainActivity : Activity() {
                 }
             }
         }
-        emu.start(bytes, name)?.let { toast(it) }
+        val err = emu.start(bytes, name)
+        if (err != null) toast(err)
+        else if (uiP.autoResume && !editOnly && emu.loadState(0)) toast("Continuando de onde você parou")
     }
 
     // ---------- shaders ----------
@@ -282,11 +296,34 @@ class MainActivity : Activity() {
 
     // ---------- menu ----------
     private fun stateDialog(save: Boolean) {
-        showDlg(AlertDialog.Builder(this).setTitle(if (save) "Salvar estado" else "Carregar estado")
-            .setItems(arrayOf("Slot 1", "Slot 2", "Slot 3")) { _, s ->
-                val ok = if (save) emu.saveState(s + 1) else emu.loadState(s + 1)
-                toast(if (ok) (if (save) "Estado salvo" else "Estado carregado") else "Não foi possível")
+        val d = resources.displayMetrics.density
+        fun px(v: Int) = (v * d).toInt()
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(px(12), px(8), px(12), px(8)) }
+        lateinit var dlg: AlertDialog
+        for (s in (if (save) (1..5).toList() else (0..5).toList())) { // slot 0 = auto-save (só carregar)
+            val sf = emu.stateFile(s); val tf = emu.thumbFile(s); val has = sf.exists()
+            val img = ImageView(this).apply {
+                scaleType = ImageView.ScaleType.CENTER_CROP; setBackgroundColor(0xFF1A1A1A.toInt())
+                if (has && tf.exists()) BitmapFactory.decodeFile(tf.path)?.let { setImageBitmap(it) }
+            }
+            val label = TextView(this).apply {
+                text = (if (s == 0) "Auto-save" else "Slot $s") + "\n" + (if (has) DateFormat.format("dd/MM  HH:mm", sf.lastModified()).toString() else "vazio")
+                setTextColor(Color.WHITE); textSize = 15f; setPadding(px(14), 0, 0, 0)
+            }
+            col.addView(LinearLayout(this).apply {
+                gravity = Gravity.CENTER_VERTICAL; setPadding(0, px(6), 0, px(6))
+                addView(img, LinearLayout.LayoutParams(px(120), px(80)))
+                addView(label, LinearLayout.LayoutParams(0, -2, 1f))
+                setOnClickListener {
+                    dlg.dismiss()
+                    val ok = if (save) emu.saveState(s) else emu.loadState(s)
+                    toast(if (ok) (if (save) "Estado salvo no slot $s" else "Estado carregado") else (if (save) "Não foi possível salvar" else "Slot vazio"))
+                }
             })
+        }
+        dlg = showDlgGet(AlertDialog.Builder(this, AlertDialog.THEME_DEVICE_DEFAULT_DARK)
+            .setTitle(if (save) "Salvar estado (5 slots)" else "Carregar estado")
+            .setView(ScrollView(this).apply { addView(col) }))
     }
 
     private fun showMenu() {
@@ -349,7 +386,9 @@ class MainActivity : Activity() {
 
     // ---------- ciclo de vida ----------
     override fun onWindowFocusChanged(f: Boolean) { super.onWindowFocusChanged(f); if (f) immersive() }
-    override fun onPause() { super.onPause(); emu.paused = true; emu.saveSram(); glView.onPause() }
+    override fun onPause() { super.onPause(); emu.paused = true; emu.saveSram()
+        if (::uiP.isInitialized && (uiP.autoSaveMs > 0 || uiP.autoResume)) emu.saveState(0)
+        glView.onPause() }
     override fun onResume() { super.onResume(); glView.onResume(); if (openDialogs == 0) emu.paused = false; immersive() }
     override fun onDestroy() { super.onDestroy(); emu.stop() }
 }

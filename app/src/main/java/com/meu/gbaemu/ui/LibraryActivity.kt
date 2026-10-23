@@ -21,10 +21,11 @@ class LibraryActivity : Activity() {
     private lateinit var list: LinearLayout
     private lateinit var chipHost: FrameLayout
     private val covers = HashMap<String, Bitmap?>()
+    private var sig = 0
     private var filter = "Todos"; private var sort = "A-Z"; private var q = ""
 
     override fun onCreate(b: Bundle?) {
-        super.onCreate(b); p = Prefs(this); window.statusBarColor = T.BG
+        super.onCreate(b); p = Prefs(this); sig = T.sig(); window.statusBarColor = T.BG
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(T.BG) }
         val gear = ImageButton(this).apply {
             setImageResource(com.meu.gbaemu.R.drawable.ic_gear)
@@ -33,7 +34,7 @@ class LibraryActivity : Activity() {
         }
         root.addView(T.header(this, T.text(this, "Biblioteca", 18f, T.GOLD2, true), gear))
         val search = EditText(this).apply {
-            hint = "Buscar jogo"; setHintTextColor(T.MUT); setTextColor(T.TX); setSingleLine()
+            hint = "Buscar jogo"; setHintTextColor(T.MUT); T.font?.let { typeface = it }; setTextColor(T.TX); setSingleLine()
             background = T.box(this@LibraryActivity, 0xFF0C0C0C.toInt(), T.LINE)
             setPadding(T.dp(context, 14), T.dp(context, 10), T.dp(context, 14), T.dp(context, 10))
             addTextChangedListener(object : TextWatcher {
@@ -57,7 +58,7 @@ class LibraryActivity : Activity() {
         setContentView(root)
     }
 
-    override fun onResume() { super.onResume(); chips(); fill() }
+    override fun onResume() { super.onResume(); if (T.sig() != sig) { recreate(); return }; chips(); fill() }
 
     private fun chips() {
         chipHost.removeAllViews()

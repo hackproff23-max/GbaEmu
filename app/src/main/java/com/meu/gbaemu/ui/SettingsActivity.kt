@@ -3,10 +3,13 @@ package com.meu.gbaemu.ui
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
+import android.content.res.ColorStateList
+import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.view.Gravity
+import android.view.View
 import android.widget.*
 import com.meu.gbaemu.MainActivity
 import java.io.File
@@ -25,17 +28,19 @@ class SettingsActivity : Activity() {
             orientation = LinearLayout.VERTICAL; setBackgroundColor(T.BG)
             addView(T.header(context, title, null)); addView(body, LinearLayout.LayoutParams(-1, 0, 1f))
         })
-        show("menu")
+        show(b?.getString("page") ?: "menu")
     }
 
+    override fun onSaveInstanceState(o: Bundle) { super.onSaveInstanceState(o); o.putString("page", page) }
+
     @Deprecated("Deprecated in Java")
-    override fun onBackPressed() { if (page != "menu") show("menu") else super.onBackPressed() }
+    override fun onBackPressed() { if (page == "colors") show("adv") else if (page != "menu") show("menu") else super.onBackPressed() }
 
     private fun show(pg: String) {
         page = pg; body.removeAllViews()
-        title.text = mapOf("menu" to "Configurações", "video" to "Vídeo", "audio" to "Áudio", "ctrl" to "Controle", "shaders" to "Shaders", "adv" to "Avançado")[pg]
+        title.text = mapOf("menu" to "Configurações", "video" to "Vídeo", "audio" to "Áudio", "ctrl" to "Controle", "shaders" to "Shaders", "adv" to "Avançado", "colors" to "Cores do app")[pg]
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(T.dp(context, 16), 0, T.dp(context, 16), T.dp(context, 30)) }
-        when (pg) { "menu" -> menu(col); "video" -> video(col); "audio" -> audio(col); "ctrl" -> ctrl(col); "shaders" -> shaders(col); "adv" -> adv(col) }
+        when (pg) { "menu" -> menu(col); "video" -> video(col); "audio" -> audio(col); "ctrl" -> ctrl(col); "shaders" -> shaders(col); "adv" -> adv(col); "colors" -> colorsPage(col) }
         body.addView(ScrollView(this).apply { addView(col) })
     }
 
@@ -142,6 +147,17 @@ class SettingsActivity : Activity() {
         col.addView(T.note(this, "Liga e desliga pelo menu do jogo (Acelerar). Máx. = 16x. Cada jogo pode ter a sua velocidade na Biblioteca (segure o jogo). Vale na próxima vez que você abrir um jogo."))
         col.addView(T.switchRow(this, "Som durante o fast-forward", p.ffAudio) { p.ffAudio = it })
         col.addView(T.note(this, "O som acelera junto com o jogo (fica mais agudo). Desligue se preferir silêncio ao acelerar."))
+        col.addView(T.h(this, "Auto-save e retomada"))
+        col.addView(T.note(this, "Salva sozinho o estado do jogo, com foto da tela, no slot Auto-save (aparece em Menu > Carregar estado). Também salva ao fechar o jogo."))
+        col.addView(T.chips(this, AUTO_STEPS, p.autoSave) { p.autoSave = it; show("adv") })
+        col.addView(T.switchRow(this, "Auto-resume (continuar de onde parou)", p.autoResume) { p.autoResume = it })
+        col.addView(T.note(this, "Ao fechar o jogo ele salva sozinho; ao abrir de novo volta exatamente de onde você parou. Há 5 slots manuais + 1 automático. Vale na próxima vez que você abrir um jogo."))
+        col.addView(T.h(this, "Aparência"))
+        col.addView(btn("Importar fonte das letras (.ttf)", true) {
+            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); type = "*/*" }, 3)
+        })
+        if (p.hasFont()) col.addView(btn("Voltar à fonte padrão", false) { p.clearFont(); recreate() })
+        col.addView(btn("Cores do app (RGB)…", false) { show("colors") })
         col.addView(T.h(this, "Biblioteca"))
         col.addView(btn("Limpar lista de jogos", false) {
             AlertDialog.Builder(this, AlertDialog.THEME_DEVICE_DEFAULT_DARK).setTitle("Limpar a lista?").setMessage("Os arquivos e os saves não são apagados.")
@@ -160,7 +176,9 @@ class SettingsActivity : Activity() {
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(req: Int, res: Int, data: Intent?) {
         super.onActivityResult(req, res, data)
-        if (req != 2 || res != RESULT_OK || data == null) return
+        if (res != RESULT_OK || data == null) return
+        if (req == 3) { importFont(data.data); return }
+        if (req != 2) return
         val uris = ArrayList<Uri>()
         data.clipData?.let { cd -> for (i in 0 until cd.itemCount) uris += cd.getItemAt(i).uri }
         if (uris.isEmpty()) data.data?.let { uris += it }
@@ -173,5 +191,47 @@ class SettingsActivity : Activity() {
         }
         Toast.makeText(this, "$ok shader(s) importado(s)" + if (skip > 0) " • $skip ignorado(s) (só .glsl/.vsh/.fsh)" else "", Toast.LENGTH_LONG).show()
         show("shaders")
+    }
+
+    private fun importFont(u: Uri?) {
+        if (u == null) return
+        val nm = displayName(u).lowercase()
+        if (!(nm.endsWith(".ttf") || nm.endsWith(".otf"))) { Toast.makeText(this, "Escolha um arquivo .ttf ou .otf", Toast.LENGTH_LONG).show(); return }
+        val ok = try { contentResolver.openInputStream(u)?.use { p.importFont(it) } ?: false } catch (e: Exception) { false }
+        Toast.makeText(this, if (ok) "Fonte aplicada" else "Arquivo de fonte inválido", Toast.LENGTH_LONG).show()
+        if (ok) recreate()
+    }
+
+    private var editColor = 0
+
+    private fun colorsPage(col: LinearLayout) {
+        col.addView(T.note(this, "Escolha qual cor mudar e ajuste R, G e B (0 a 255). Ao soltar o controle, o app inteiro recarrega com a nova cor."))
+        col.addView(T.chips(this, COLOR_NAMES, COLOR_NAMES[editColor]) { editColor = COLOR_NAMES.indexOf(it); show("colors") })
+        val key = COLOR_KEYS[editColor]; val cur = T.get(key)
+        val rgb = intArrayOf(Color.red(cur), Color.green(cur), Color.blue(cur))
+        val sw = T.text(this, "", 16f, Color.WHITE, true).apply { gravity = Gravity.CENTER; setPadding(0, T.dp(context, 22), 0, T.dp(context, 22)) }
+        fun refresh() {
+            val c = Color.rgb(rgb[0], rgb[1], rgb[2])
+            sw.background = T.box(sw.context, c, T.LINE)
+            sw.text = "%s  #%02X%02X%02X".format(COLOR_NAMES[editColor], rgb[0], rgb[1], rgb[2])
+            sw.setTextColor(if (rgb[0] * 0.3 + rgb[1] * 0.59 + rgb[2] * 0.11 > 140) Color.BLACK else Color.WHITE)
+        }
+        refresh()
+        col.addView(sw, LinearLayout.LayoutParams(-1, -2).apply { topMargin = T.dp(this@SettingsActivity, 10) })
+        fun slider(label: String, idx: Int): View {
+            val lb = T.text(this, "$label: ${rgb[idx]}", 13f, T.MUT)
+            val sb = SeekBar(this).apply {
+                max = 255; progress = rgb[idx]
+                progressTintList = ColorStateList.valueOf(T.GOLD); thumbTintList = ColorStateList.valueOf(T.GOLD)
+                setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                    override fun onProgressChanged(s: SeekBar?, v: Int, u: Boolean) { rgb[idx] = v; lb.text = "$label: $v"; refresh() }
+                    override fun onStartTrackingTouch(s: SeekBar?) {}
+                    override fun onStopTrackingTouch(s: SeekBar?) { p.setColor(key, Color.rgb(rgb[0], rgb[1], rgb[2])); recreate() }
+                })
+            }
+            return LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, T.dp(context, 8), 0, T.dp(context, 8)); addView(lb); addView(sb) }
+        }
+        col.addView(slider("Vermelho (R)", 0)); col.addView(slider("Verde (G)", 1)); col.addView(slider("Azul (B)", 2))
+        col.addView(btn("Restaurar cores padrão", false) { p.resetColors(); recreate() })
     }
 }

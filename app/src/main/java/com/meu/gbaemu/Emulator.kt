@@ -3,7 +3,9 @@ package com.meu.gbaemu
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFormat
+import android.graphics.Bitmap
 import android.media.AudioTrack
+import android.os.SystemClock
 import java.io.File
 
 class Emulator(private val ctx: Context, private val onFrame: () -> Unit) {
@@ -12,6 +14,9 @@ class Emulator(private val ctx: Context, private val onFrame: () -> Unit) {
     @Volatile var fast = false
     @Volatile var ffMul = 4
     @Volatile var ffAudio = true
+    @Volatile var autoEveryMs = 0L
+    private var lastAuto = 0L
+    private val saveLock = Any()
     @Volatile var volume = 1f
     @Volatile var baseMask = 0
     private var frame = 0L
@@ -41,6 +46,7 @@ class Emulator(private val ctx: Context, private val onFrame: () -> Unit) {
             .setTransferMode(AudioTrack.MODE_STREAM).build()
         track = t
         running = true; paused = false; loaded = true
+        lastAuto = SystemClock.uptimeMillis()
         thread = Thread { loop(t) }.also { it.start() }
         return null
     }
@@ -88,6 +94,10 @@ class Emulator(private val ctx: Context, private val onFrame: () -> Unit) {
                     }
                 }
             }
+            if (autoEveryMs > 0) {
+                val now = SystemClock.uptimeMillis()
+                if (now - lastAuto >= autoEveryMs) { lastAuto = now; saveState(0) } // slot 0 = auto-save
+            }
         }
     }
 
@@ -108,10 +118,33 @@ class Emulator(private val ctx: Context, private val onFrame: () -> Unit) {
         File(savesDir, "$key.srm").writeBytes(d)
     }
 
+    fun stateFile(slot: Int) = File(savesDir, "$key.st$slot")
+    fun thumbFile(slot: Int) = File(savesDir, "$key.st$slot.jpg")
+
+    /** Foto da tela atual (do quadro bruto do núcleo, sem shader). */
+    fun snapshot(): Bitmap? = try {
+        synchronized(lock) {
+            val sz = Native.frameSize(); val w = sz[0]; val h = sz[1]
+            if (w <= 0 || h <= 0) null else {
+                val b = Native.frameBuffer() ?: return@synchronized null
+                val px = IntArray(w * h)
+                for (i in 0 until w * h) {
+                    val o = i * 4
+                    px[i] = (0xFF shl 24) or ((b.get(o).toInt() and 0xFF) shl 16) or ((b.get(o + 1).toInt() and 0xFF) shl 8) or (b.get(o + 2).toInt() and 0xFF)
+                }
+                Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888)
+            }
+        }
+    } catch (e: Exception) { null }
+
     fun saveState(slot: Int): Boolean {
         if (!loaded) return false
         val d = synchronized(lock) { Native.saveState() } ?: return false
-        File(savesDir, "$key.st$slot").writeBytes(d)
+        val bmp = snapshot()
+        synchronized(saveLock) {
+            stateFile(slot).writeBytes(d)
+            if (bmp != null) try { thumbFile(slot).outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 80, it) } } catch (e: Exception) { }
+        }
         return true
     }
 

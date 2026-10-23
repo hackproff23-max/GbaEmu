@@ -5,6 +5,7 @@ import android.graphics.*
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
+import com.meu.gbaemu.ui.T
 import java.io.File
 import java.io.InputStream
 import kotlin.math.*
@@ -163,16 +164,16 @@ class ControlsView(ctx: Context) : View(ctx) {
     }
 
     private val extraFill = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val extraLine = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 5f; color = 0xFFD4AF37.toInt() }
+    private val extraLine = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 5f; color = T.GOLD }
     private val extraText = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER; typeface = Typeface.DEFAULT_BOLD }
 
     /** Combo/turbo sem PNG: círculo preto com contorno dourado. */
     private fun drawExtra(c: Canvas, e: El, r: RectF, a: Float) {
         val al = (a * 255).toInt()
-        extraFill.color = if (e.pressed) 0xFFD4AF37.toInt() else 0xFF1A1405.toInt(); extraFill.alpha = al
-        extraLine.alpha = al
+        extraFill.color = if (e.pressed) T.GOLD else T.CARD; extraFill.alpha = al
+        extraLine.color = T.GOLD; extraLine.alpha = al
         c.drawOval(r, extraFill); c.drawOval(r, extraLine)
-        extraText.color = if (e.pressed) Color.BLACK else 0xFFF5D77A.toInt(); extraText.alpha = al
+        extraText.color = if (e.pressed) T.BG else T.GOLD2; extraText.alpha = al; extraText.typeface = T.font ?: Typeface.DEFAULT_BOLD
         extraText.textSize = r.width() * 0.30f
         c.drawText(LABELS[e.name] ?: "", r.centerX(), r.centerY() + extraText.textSize / 3, extraText)
     }
