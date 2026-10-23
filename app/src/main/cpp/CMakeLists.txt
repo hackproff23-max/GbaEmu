@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.18.1)
+project(gbabridge)
+add_library(gbabridge SHARED bridge.cpp)
+find_library(log-lib log)
+target_link_libraries(gbabridge ${log-lib} dl)
