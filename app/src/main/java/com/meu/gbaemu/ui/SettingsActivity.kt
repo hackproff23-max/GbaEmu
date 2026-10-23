@@ -42,7 +42,7 @@ class SettingsActivity : Activity() {
     private fun btn(text: String, solid: Boolean, click: () -> Unit) = T.text(this, text, 15f, if (solid) T.BG else T.GOLD, true).apply {
         gravity = Gravity.CENTER; background = T.box(context, if (solid) T.GOLD else 0xFF0C0C0C.toInt(), T.GOLD)
         setPadding(0, T.dp(context, 12), 0, T.dp(context, 12)); setOnClickListener { click() }
-    }.also { it.layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = T.dp(this, 12) } }
+    }.also { it.layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = T.dp(this@SettingsActivity, 12) } }
 
     private fun menu(col: LinearLayout) {
         listOf(Triple("video", "Vídeo", "Orientação, filtro e escala"), Triple("audio", "Áudio", "Volume e mudo"),
