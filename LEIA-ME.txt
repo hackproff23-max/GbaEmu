@@ -1,0 +1,4 @@
+No Termux, na pasta do projeto:
+  unzip -o ~/storage/downloads/gba-emu-patch.zip -d ~/GbaEmu
+  cd ~/GbaEmu && git add . && git commit -m "Interface preto e dourado" && git push
+Depois baixe o APK em Actions > Build APK > Artifacts.

@@ -20,12 +20,18 @@ class ControlsView(ctx: Context) : View(ctx) {
         set(v) { field = v; invalidate() }
     var opacity = 0.85f
     var haptic = true
+    var showCombo = true
+        set(v) { field = v; invalidate() }
+    var showTurboA = true
+        set(v) { field = v; invalidate() }
+    var showTurboB = true
+        set(v) { field = v; invalidate() }
     var layoutPort = ""
     var layoutLand = ""
     var editMode = false
         set(v) { field = v; if (!v) { selected = null; save() }; invalidate() }
 
-    private val els = listOf("dpad", "stick", "a", "b", "l", "r", "start", "select", "menu").associateWith { El(it) }
+    private val els = listOf("dpad", "stick", "a", "b", "l", "r", "start", "select", "menu", "cm", "ta", "tb").associateWith { El(it) }
     private val skin = HashMap<String, Bitmap>()
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 4f; color = Color.YELLOW; pathEffect = DashPathEffect(floatArrayOf(18f, 12f), 0f) }
@@ -77,13 +83,15 @@ class ControlsView(ctx: Context) : View(ctx) {
         "a" to floatArrayOf(.87f, .68f, .20f), "b" to floatArrayOf(.68f, .77f, .20f),
         "l" to floatArrayOf(.16f, .45f, .30f), "r" to floatArrayOf(.84f, .45f, .30f),
         "start" to floatArrayOf(.62f, .93f, .22f), "select" to floatArrayOf(.38f, .93f, .22f),
-        "menu" to floatArrayOf(.50f, .50f, .11f)
+        "menu" to floatArrayOf(.50f, .50f, .11f),
+        "cm" to floatArrayOf(.88f, .52f, .12f), "ta" to floatArrayOf(.68f, .60f, .12f), "tb" to floatArrayOf(.50f, .60f, .12f)
     ) else mapOf(
         "dpad" to floatArrayOf(.13f, .66f, .46f), "stick" to floatArrayOf(.13f, .66f, .46f),
         "a" to floatArrayOf(.93f, .50f, .22f), "b" to floatArrayOf(.82f, .72f, .22f),
         "l" to floatArrayOf(.09f, .14f, .32f), "r" to floatArrayOf(.91f, .14f, .32f),
         "start" to floatArrayOf(.56f, .92f, .20f), "select" to floatArrayOf(.44f, .92f, .20f),
-        "menu" to floatArrayOf(.50f, .08f, .12f)
+        "menu" to floatArrayOf(.50f, .08f, .12f),
+        "cm" to floatArrayOf(.93f, .30f, .12f), "ta" to floatArrayOf(.78f, .46f, .12f), "tb" to floatArrayOf(.68f, .68f, .12f)
     )
 
     private fun parse(s: String): Map<String, FloatArray> = try {
@@ -112,7 +120,8 @@ class ControlsView(ctx: Context) : View(ctx) {
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) { land = w > h; applyLayout() }
 
     // ---------- geometria ----------
-    private fun visible(e: El) = e.name != (if (useStick) "dpad" else "stick")
+    private fun visible(e: El) = e.name != (if (useStick) "dpad" else "stick") &&
+        !(e.name == "cm" && !showCombo) && !(e.name == "ta" && !showTurboA) && !(e.name == "tb" && !showTurboB)
 
     private fun rect(e: El): RectF {
         val bm = skin[if (e.name == "stick") "stick_base" else e.name]
@@ -145,11 +154,27 @@ class ControlsView(ctx: Context) : View(ctx) {
                     val ky = if (stickPtr >= 0) knobY else r.centerY()
                     c.drawBitmap(k, null, RectF(kx - kw / 2, ky - kh / 2, kx + kw / 2, ky + kh / 2), paint)
                 }
-            } else skin[e.name]?.let { c.drawBitmap(it, null, r, paint) }
+            } else if (skin[e.name] != null) c.drawBitmap(skin[e.name]!!, null, r, paint)
+            else if (e.name in EXTRA) drawExtra(c, e, r, a)
             c.restore()
             if (editMode && e === selected) c.drawRect(r, outline)
         }
         if (editMode) c.drawText("Edição: arraste • pince p/ redimensionar • toque ☰ p/ concluir", width / 2f, 60f, textP)
+    }
+
+    private val extraFill = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val extraLine = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 5f; color = 0xFFD4AF37.toInt() }
+    private val extraText = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER; typeface = Typeface.DEFAULT_BOLD }
+
+    /** Combo/turbo sem PNG: círculo preto com contorno dourado. */
+    private fun drawExtra(c: Canvas, e: El, r: RectF, a: Float) {
+        val al = (a * 255).toInt()
+        extraFill.color = if (e.pressed) 0xFFD4AF37.toInt() else 0xFF1A1405.toInt(); extraFill.alpha = al
+        extraLine.alpha = al
+        c.drawOval(r, extraFill); c.drawOval(r, extraLine)
+        extraText.color = if (e.pressed) Color.BLACK else 0xFFF5D77A.toInt(); extraText.alpha = al
+        extraText.textSize = r.width() * 0.30f
+        c.drawText(LABELS[e.name] ?: "", r.centerX(), r.centerY() + extraText.textSize / 3, extraText)
     }
 
     // ---------- toque ----------
@@ -196,7 +221,7 @@ class ControlsView(ctx: Context) : View(ctx) {
                     continue
                 }
             }
-            for ((n, bit) in BITS) { val e = els[n]!!; if (hit(e, x, y)) { e.pressed = true; mask = mask or (1 shl bit) } }
+            for ((n, bm) in BITS) { val e = els[n]!!; if (visible(e) && hit(e, x, y)) { e.pressed = true; mask = mask or bm } }
         }
         if (!stickSeen) stickPtr = -1
         if (mask and prevMask.inv() != 0 && haptic) performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
@@ -240,7 +265,10 @@ class ControlsView(ctx: Context) : View(ctx) {
     }
 
     companion object {
-        // ids joypad do libretro: B=0 SELECT=2 START=3 A=8 L=10 R=11
-        private val BITS = listOf("b" to 0, "select" to 2, "start" to 3, "a" to 8, "l" to 10, "r" to 11)
+        // máscaras do joypad libretro: B=0 SELECT=2 START=3 A=8 L=10 R=11; extras: combo=A+B, turbo A=16, turbo B=17
+        private val BITS = listOf("b" to (1 shl 0), "select" to (1 shl 2), "start" to (1 shl 3), "a" to (1 shl 8), "l" to (1 shl 10), "r" to (1 shl 11),
+            "cm" to ((1 shl 0) or (1 shl 8)), "ta" to (1 shl 16), "tb" to (1 shl 17))
+        private val EXTRA = setOf("cm", "ta", "tb")
+        private val LABELS = mapOf("cm" to "A+B", "ta" to "TA", "tb" to "TB")
     }
 }

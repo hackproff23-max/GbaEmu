@@ -1,0 +1,155 @@
+package com.meu.gbaemu.ui
+
+import android.app.Activity
+import android.app.AlertDialog
+import android.content.Intent
+import android.net.Uri
+import android.os.Bundle
+import android.provider.OpenableColumns
+import android.text.Editable
+import android.text.TextWatcher
+import android.view.Gravity
+import android.view.View
+import android.widget.*
+import com.meu.gbaemu.MainActivity
+
+class LibraryActivity : Activity() {
+    private lateinit var p: Prefs
+    private lateinit var list: LinearLayout
+    private lateinit var chipHost: FrameLayout
+    private var filter = "Todos"; private var sort = "A-Z"; private var q = ""
+
+    override fun onCreate(b: Bundle?) {
+        super.onCreate(b); p = Prefs(this); window.statusBarColor = T.BG
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(T.BG) }
+        val gear = ImageButton(this).apply {
+            setImageResource(com.meu.gbaemu.R.drawable.ic_gear)
+            background = T.box(this@LibraryActivity, 0xFF0B0B0B.toInt(), T.GOLD); contentDescription = "Configurações"
+            setOnClickListener { startActivity(Intent(this@LibraryActivity, SettingsActivity::class.java)) }
+        }
+        root.addView(T.header(this, T.text(this, "Biblioteca", 18f, T.GOLD2, true), gear))
+        val search = EditText(this).apply {
+            hint = "Buscar jogo"; setHintTextColor(T.MUT); setTextColor(T.TX); setSingleLine()
+            background = T.box(this@LibraryActivity, 0xFF0C0C0C.toInt(), T.LINE)
+            setPadding(T.dp(context, 14), T.dp(context, 10), T.dp(context, 14), T.dp(context, 10))
+            addTextChangedListener(object : TextWatcher {
+                override fun afterTextChanged(s: Editable?) { q = s.toString(); fill() }
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            })
+        }
+        val add = T.text(this, "＋  Adicionar jogos (.gba / .zip)", 15f, T.BG, true).apply {
+            gravity = Gravity.CENTER; background = T.box(context, T.GOLD, T.GOLD)
+            setPadding(0, T.dp(context, 12), 0, T.dp(context, 12)); setOnClickListener { pickRoms() }
+        }
+        chipHost = FrameLayout(this)
+        list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(T.dp(context, 16), 0, T.dp(context, 16), T.dp(context, 24))
+            addView(search); addView(chipHost); addView(list)
+            addView(add, LinearLayout.LayoutParams(-1, -2).apply { topMargin = T.dp(this@LibraryActivity, 12) })
+        }
+        root.addView(ScrollView(this).apply { addView(body) })
+        setContentView(root)
+    }
+
+    override fun onResume() { super.onResume(); chips(); fill() }
+
+    private fun chips() {
+        chipHost.removeAllViews()
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        col.addView(T.chips(this, listOf("Todos", "Favoritos", "Recentes"), filter) { filter = it; chips(); fill() })
+        col.addView(T.chips(this, listOf("A-Z", "Último jogado"), sort) { sort = it; chips(); fill() })
+        chipHost.addView(col)
+    }
+
+    private fun fill() {
+        list.removeAllViews()
+        var g = p.games().filter { it.name.contains(q, true) }
+        g = when (filter) { "Favoritos" -> g.filter { p.isFav(it.id) }; "Recentes" -> g.filter { p.lastPlayed(it.id) > 0 }; else -> g }
+        g = if (sort == "A-Z") g.sortedBy { it.name.lowercase() } else g.sortedByDescending { p.lastPlayed(it.id) }
+        if (g.isEmpty()) list.addView(T.note(this, "Nenhum jogo na lista. Toque em “Adicionar jogos”."))
+        g.chunked(2).forEach { pair ->
+            val row = LinearLayout(this).apply { setPadding(0, T.dp(context, 6), 0, T.dp(context, 6)) }
+            pair.forEach { row.addView(card(it), LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = T.dp(this@LibraryActivity, 6); rightMargin = T.dp(this@LibraryActivity, 6) }) }
+            if (pair.size == 1) row.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+            list.addView(row)
+        }
+    }
+
+    private fun shLabel(v: String) = when (v) { SH_GLOBAL -> "Shader padrão"; SH_NONE -> "Sem shader"; else -> v }
+
+    private fun card(g: Game): View {
+        val cov = T.text(this, (if (p.isFav(g.id)) "★ " else "") + g.name.take(2).uppercase(), 30f, T.BG, true).apply { gravity = Gravity.CENTER; setBackgroundColor(T.GOLD) }
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; background = T.box(context, T.CARD, T.LINE, 14)
+            addView(cov, LinearLayout.LayoutParams(-1, T.dp(context, 90)))
+            addView(T.text(context, g.name, 14f, T.TX, true).apply { maxLines = 2; setPadding(T.dp(context, 10), T.dp(context, 8), T.dp(context, 10), 0) })
+            addView(T.note(context, "${shLabel(p.shaderFor(g.id))} · ${p.kbFor(g.id)}").apply { setPadding(T.dp(context, 10), 0, T.dp(context, 10), T.dp(context, 8)) })
+            setOnClickListener { options(g) }
+        }
+    }
+
+    private fun options(g: Game) {
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(0xFF0A0A0A.toInt()); setPadding(T.dp(context, 18), T.dp(context, 16), T.dp(context, 18), T.dp(context, 16)) }
+        lateinit var dlg: AlertDialog
+        fun rowBtn(label: String, click: () -> Unit) = col.addView(
+            T.text(this, label, 15f, T.GOLD2).apply { background = T.box(context, 0xFF0C0C0C.toInt(), T.GOLD); setPadding(T.dp(context, 14), T.dp(context, 12), T.dp(context, 14), T.dp(context, 12)); setOnClickListener { click() } },
+            LinearLayout.LayoutParams(-1, -2).apply { topMargin = T.dp(this@LibraryActivity, 10) })
+        col.addView(T.text(this, g.name, 18f, T.GOLD2, true))
+        rowBtn("Shader deste jogo: ${shLabel(p.shaderFor(g.id))}") {
+            val av = p.availableShaders(); val keys = listOf(SH_GLOBAL, SH_NONE) + av
+            pick("Shader deste jogo", listOf("Shader padrão (das configurações)", "Sem shader") + av, keys.indexOf(p.shaderFor(g.id))) { p.setShader(g.id, keys[it]); dlg.dismiss(); options(g); fill() }
+        }
+        rowBtn("Teclado deste jogo: ${p.kbFor(g.id)}") {
+            pick("Perfil de teclado", KB_PROFILES, KB_PROFILES.indexOf(p.kbFor(g.id))) { p.setKb(g.id, KB_PROFILES[it]); dlg.dismiss(); options(g); fill() }
+        }
+        rowBtn(if (p.isFav(g.id)) "★ Remover dos favoritos" else "☆ Favoritar") { p.setFav(g.id, !p.isFav(g.id)); dlg.dismiss(); fill() }
+        rowBtn("Remover da lista") { p.removeGame(g.id); dlg.dismiss(); fill() }
+        col.addView(T.text(this, "▶  JOGAR", 16f, T.BG, true).apply {
+            gravity = Gravity.CENTER; background = T.box(context, T.GOLD, T.GOLD); setPadding(0, T.dp(context, 13), 0, T.dp(context, 13))
+            setOnClickListener { dlg.dismiss(); play(g) }
+        }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = T.dp(this@LibraryActivity, 16) })
+        dlg = AlertDialog.Builder(this, AlertDialog.THEME_DEVICE_DEFAULT_DARK).setView(col).create(); dlg.show()
+    }
+
+    private fun pick(title: String, labels: List<String>, cur: Int, done: (Int) -> Unit) =
+        AlertDialog.Builder(this, AlertDialog.THEME_DEVICE_DEFAULT_DARK).setTitle(title)
+            .setSingleChoiceItems(labels.toTypedArray(), cur) { d, i -> d.dismiss(); done(i) }.show()
+
+    private fun play(g: Game) {
+        p.touch(g.id)
+        startActivity(Intent(this, MainActivity::class.java).putExtra("rom_uri", g.uri).putExtra("game_id", g.id))
+    }
+
+    private fun pickRoms() {
+        startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE); type = "*/*"; putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+        }, 1)
+    }
+
+    private fun displayName(u: Uri): String {
+        contentResolver.query(u, null, null, null, null)?.use { c ->
+            val i = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            if (i >= 0 && c.moveToFirst()) return c.getString(i)
+        }
+        return u.lastPathSegment?.substringAfterLast('/') ?: "jogo"
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(req: Int, res: Int, data: Intent?) {
+        super.onActivityResult(req, res, data)
+        if (req != 1 || res != RESULT_OK || data == null) return
+        val uris = ArrayList<Uri>()
+        data.clipData?.let { cd -> for (i in 0 until cd.itemCount) uris += cd.getItemAt(i).uri }
+        if (uris.isEmpty()) data.data?.let { uris += it }
+        val ok = listOf(".gba", ".gb", ".gbc", ".zip")
+        val add = uris.mapNotNull { u ->
+            try { contentResolver.takePersistableUriPermission(u, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (e: Exception) { }
+            val n = displayName(u); if (ok.any { n.lowercase().endsWith(it) }) u.toString() to n else null
+        }
+        if (add.isEmpty()) Toast.makeText(this, "Nenhum arquivo .gba/.zip válido", Toast.LENGTH_SHORT).show()
+        p.addGames(add); fill()
+    }
+}

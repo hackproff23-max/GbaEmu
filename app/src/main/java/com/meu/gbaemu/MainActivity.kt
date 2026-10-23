@@ -3,6 +3,12 @@ package com.meu.gbaemu
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
+import android.content.pm.ActivityInfo
+import com.meu.gbaemu.ui.KB_PROFILES
+import com.meu.gbaemu.ui.SH_GLOBAL
+import com.meu.gbaemu.ui.SH_NONE
+import com.meu.gbaemu.ui.SettingsActivity
+import com.meu.gbaemu.ui.Prefs as UiPrefs
 import android.content.SharedPreferences
 import android.graphics.Color
 import android.net.Uri
@@ -32,11 +38,23 @@ class MainActivity : Activity() {
     private var padMask = 0
     private var axisMask = 0
     private var openDialogs = 0
+    private var profile = KB_PROFILES[0]
+    private var editOnly = false
+    private fun layKey(base: String) = if (profile == KB_PROFILES[0]) base else "$base.$profile"
     private val skinNames = setOf("dpad", "stick_base", "stick_knob", "a", "b", "l", "r", "start", "select", "menu")
 
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
         prefs = getSharedPreferences("gba", MODE_PRIVATE)
+        val ui = UiPrefs(this)
+        val gid = intent.getStringExtra("game_id")
+        editOnly = intent.getBooleanExtra("edit_layout", false)
+        profile = intent.getStringExtra("profile") ?: gid?.let { ui.kbFor(it) } ?: KB_PROFILES[0]
+        requestedOrientation = if (editOnly) ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR else when (ui.orient) {
+            "retrato" -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            "paisagem" -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            else -> ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+        }
         if (Build.VERSION.SDK_INT >= 28) {
             val lp = window.attributes
             lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
@@ -44,10 +62,16 @@ class MainActivity : Activity() {
         }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         emu = Emulator(this) { glView.requestRender() }
+        emu.ffMul = ui.ffMultiplier
+        emu.volume = if (ui.mute) 0f else ui.volume / 100f
         renderer = GbaRenderer(this, emu) { msg -> toast(msg) }
         renderer.scale = prefs.getInt("scale", 3)
         renderer.linear = prefs.getBoolean("linear", false)
-        renderer.shaderKeys = enabledShaders()
+        renderer.shaderKeys = when (val sh = gid?.let { ui.shaderFor(it) } ?: SH_GLOBAL) {
+            SH_GLOBAL -> enabledShaders()
+            SH_NONE -> emptyList()
+            else -> listOf(sh).filter { it in availableShaders() }
+        }
         glView = GLSurfaceView(this).apply {
             setEGLContextClientVersion(2)
             setRenderer(renderer)
@@ -57,23 +81,30 @@ class MainActivity : Activity() {
             useStick = prefs.getBoolean("stick", false)
             opacity = prefs.getFloat("opacity", 0.85f)
             haptic = prefs.getBoolean("haptic", true)
-            layoutPort = prefs.getString("lay_port", "") ?: ""
-            layoutLand = prefs.getString("lay_land", "") ?: ""
+            showCombo = ui.showCombo; showTurboA = ui.showTurboA; showTurboB = ui.showTurboB
+            layoutPort = prefs.getString(layKey("lay_port"), "") ?: ""
+            layoutLand = prefs.getString(layKey("lay_land"), "") ?: ""
             onMask = { m -> touchMask = m; pushInput() }
-            onMenu = { touchMask = 0; pushInput(); showMenu() }
-            onLayoutChanged = { prefs.edit().putString("lay_port", layoutPort).putString("lay_land", layoutLand).apply() }
+            onMenu = {
+                touchMask = 0; pushInput()
+                if (editMode) { editMode = false; if (editOnly) finish() } else showMenu()
+            }
+            onLayoutChanged = { prefs.edit().putString(layKey("lay_port"), layoutPort).putString(layKey("lay_land"), layoutLand).apply() }
         }
         setContentView(FrameLayout(this).apply {
             setBackgroundColor(Color.BLACK)
             addView(glView, FrameLayout.LayoutParams(-1, -1))
             addView(controls, FrameLayout.LayoutParams(-1, -1))
         })
-        prefs.getString("rom_uri", null)?.let { u -> try { loadRom(Uri.parse(u)) } catch (e: Exception) { } }
+        if (editOnly) controls.editMode = true
+        else (intent.getStringExtra("rom_uri") ?: prefs.getString("rom_uri", null))?.let { u ->
+            try { loadRom(Uri.parse(u)) } catch (e: Exception) { toast("Erro: ${e.message}") }
+        }
     }
 
     // ---------- util ----------
     private fun toast(m: String) = runOnUiThread { Toast.makeText(this, m, Toast.LENGTH_LONG).show() }
-    private fun pushInput() = Native.setInput(touchMask or padMask or axisMask)
+    private fun pushInput() { emu.baseMask = touchMask or padMask or axisMask }
 
     @Suppress("DEPRECATION")
     private fun immersive() {
@@ -259,7 +290,7 @@ class MainActivity : Activity() {
 
     private fun showMenu() {
         val items = arrayOf("Abrir ROM", "Shaders…", "Controles…", "Salvar estado…", "Carregar estado…",
-            "Acelerar: " + if (emu.fast) "ligado" else "desligado", "Reiniciar jogo")
+            "Acelerar (${emu.ffMul}x): " + if (emu.fast) "ligado" else "desligado", "Reiniciar jogo", "Configurações…", "Voltar à biblioteca")
         showDlg(AlertDialog.Builder(this).setTitle("Menu").setItems(items) { _, i ->
             when (i) {
                 0 -> pick(1, false)
@@ -269,6 +300,8 @@ class MainActivity : Activity() {
                 4 -> stateDialog(false)
                 5 -> emu.fast = !emu.fast
                 6 -> emu.reset()
+                7 -> startActivity(Intent(this, SettingsActivity::class.java))
+                8 -> finish()
             }
         })
     }

@@ -10,6 +10,10 @@ class Emulator(private val ctx: Context, private val onFrame: () -> Unit) {
     val lock = Any()
     @Volatile var paused = false
     @Volatile var fast = false
+    @Volatile var ffMul = 4
+    @Volatile var volume = 1f
+    @Volatile var baseMask = 0
+    private var frame = 0L
     @Volatile private var running = false
     @Volatile var loaded = false
         private set
@@ -45,15 +49,28 @@ class Emulator(private val ctx: Context, private val onFrame: () -> Unit) {
         t.play()
         while (running) {
             if (paused) { Thread.sleep(20); continue }
-            val n = if (fast) 4 else 1
-            synchronized(lock) { repeat(n) { Native.run() } }
+            val n = if (fast) ffMul else 1
+            synchronized(lock) { repeat(n) { Native.setInput(mixed()); Native.run(); frame++ } }
             onFrame()
             if (fast) Native.clearAudio()
             else {
                 val c = Native.audio(buf)
-                if (c > 0) t.write(buf, 0, c) // bloqueante: dá o ritmo de 60 fps
+                if (c > 0) {
+                    val v = volume
+                    if (v < 1f) for (i in 0 until c) buf[i] = (buf[i] * v).toInt().toShort()
+                    t.write(buf, 0, c) // bloqueante: dá o ritmo de 60 fps
+                }
             }
         }
+    }
+
+    /** Aplica turbo A/B (bits 16/17 da máscara) alternando a cada 2 frames. */
+    private fun mixed(): Int {
+        val m = baseMask; var o = m and 0xFFFF
+        val pulse = (frame / 2) % 2 == 0L
+        if (m and TURBO_A != 0) o = if (pulse) o or (1 shl 8) else o and (1 shl 8).inv()
+        if (m and TURBO_B != 0) o = if (pulse) o or 1 else o and 1.inv()
+        return o
     }
 
     fun reset() { synchronized(lock) { Native.reset() } }
@@ -88,4 +105,6 @@ class Emulator(private val ctx: Context, private val onFrame: () -> Unit) {
         }
         track?.release(); track = null
     }
+
+    companion object { const val TURBO_A = 1 shl 16; const val TURBO_B = 1 shl 17 }
 }
