@@ -29,12 +29,14 @@ class ControlsView(ctx: Context) : View(ctx) {
         set(v) { field = v; invalidate() }
     var showTurboB = true
         set(v) { field = v; invalidate() }
+    var showFF = true
+        set(v) { field = v; invalidate() }
     var layoutPort = ""
     var layoutLand = ""
     var editMode = false
         set(v) { field = v; if (!v) { selected = null; save() }; invalidate() }
 
-    private val els = listOf("dpad", "stick", "a", "b", "l", "r", "start", "select", "menu", "cm", "ta", "tb").associateWith { El(it) }
+    private val els = listOf("dpad", "stick", "a", "b", "l", "r", "start", "select", "menu", "cm", "ta", "tb", "ff").associateWith { El(it) }
     private val skin = HashMap<String, Bitmap>()
     private var skinSig = ""
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
@@ -100,14 +102,16 @@ class ControlsView(ctx: Context) : View(ctx) {
         "l" to floatArrayOf(.16f, .45f, .30f), "r" to floatArrayOf(.84f, .45f, .30f),
         "start" to floatArrayOf(.62f, .93f, .22f), "select" to floatArrayOf(.38f, .93f, .22f),
         "menu" to floatArrayOf(.50f, .50f, .11f),
-        "cm" to floatArrayOf(.88f, .52f, .12f), "ta" to floatArrayOf(.68f, .60f, .12f), "tb" to floatArrayOf(.50f, .60f, .12f)
+        "cm" to floatArrayOf(.88f, .52f, .12f), "ta" to floatArrayOf(.68f, .60f, .12f), "tb" to floatArrayOf(.50f, .60f, .12f),
+        "ff" to floatArrayOf(.32f, .60f, .12f)
     ) else mapOf(
         "dpad" to floatArrayOf(.13f, .66f, .46f), "stick" to floatArrayOf(.13f, .66f, .46f),
         "a" to floatArrayOf(.93f, .50f, .22f), "b" to floatArrayOf(.82f, .72f, .22f),
         "l" to floatArrayOf(.09f, .14f, .32f), "r" to floatArrayOf(.91f, .14f, .32f),
         "start" to floatArrayOf(.56f, .92f, .20f), "select" to floatArrayOf(.44f, .92f, .20f),
         "menu" to floatArrayOf(.50f, .08f, .12f),
-        "cm" to floatArrayOf(.93f, .30f, .12f), "ta" to floatArrayOf(.78f, .46f, .12f), "tb" to floatArrayOf(.68f, .68f, .12f)
+        "cm" to floatArrayOf(.93f, .30f, .12f), "ta" to floatArrayOf(.78f, .46f, .12f), "tb" to floatArrayOf(.68f, .68f, .12f),
+        "ff" to floatArrayOf(.24f, .34f, .12f)
     )
 
     private fun parse(s: String): Map<String, FloatArray> = try {
@@ -137,7 +141,7 @@ class ControlsView(ctx: Context) : View(ctx) {
 
     // ---------- geometria ----------
     private fun visible(e: El) = e.name != (if (useStick) "dpad" else "stick") &&
-        !(e.name == "cm" && !showCombo) && !(e.name == "ta" && !showTurboA) && !(e.name == "tb" && !showTurboB)
+        !(e.name == "cm" && !showCombo) && !(e.name == "ta" && !showTurboA) && !(e.name == "tb" && !showTurboB) && !(e.name == "ff" && !showFF)
 
     private fun rect(e: El): RectF {
         val bm = skin[if (e.name == "stick") "stick_base" else e.name]
@@ -281,10 +285,10 @@ class ControlsView(ctx: Context) : View(ctx) {
     }
 
     companion object {
-        // máscaras do joypad libretro: B=0 SELECT=2 START=3 A=8 L=10 R=11; extras: combo=A+B, turbo A=16, turbo B=17
+        // máscaras do joypad libretro: B=0 SELECT=2 START=3 A=8 L=10 R=11; extras: combo=A+B, turbo A=16, turbo B=17, fast-forward=18
         private val BITS = listOf("b" to (1 shl 0), "select" to (1 shl 2), "start" to (1 shl 3), "a" to (1 shl 8), "l" to (1 shl 10), "r" to (1 shl 11),
-            "cm" to ((1 shl 0) or (1 shl 8)), "ta" to (1 shl 16), "tb" to (1 shl 17))
-        private val EXTRA = setOf("cm", "ta", "tb")
-        private val LABELS = mapOf("cm" to "A+B", "ta" to "TA", "tb" to "TB")
+            "cm" to ((1 shl 0) or (1 shl 8)), "ta" to (1 shl 16), "tb" to (1 shl 17), "ff" to (1 shl 18))
+        private val EXTRA = setOf("cm", "ta", "tb", "ff")
+        private val LABELS = mapOf("cm" to "A+B", "ta" to "TA", "tb" to "TB", "ff" to "FF")
     }
 }

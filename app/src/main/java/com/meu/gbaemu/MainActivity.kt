@@ -56,6 +56,11 @@ import java.io.ByteArrayInputStream
 import java.io.File
 import java.util.zip.ZipInputStream
 
+/** Bit de cada ação na máscara de entrada (B=0 SELECT=2 START=3 direções 4..7 A=8 L=10 R=11; extras: turbo A/B e fast-forward). */
+private val PAD_BITS = mapOf("a" to (1 shl 8), "b" to 1, "l" to (1 shl 10), "r" to (1 shl 11), "start" to (1 shl 3), "select" to (1 shl 2),
+    "up" to (1 shl 4), "down" to (1 shl 5), "left" to (1 shl 6), "right" to (1 shl 7),
+    "ta" to Emulator.TURBO_A, "tb" to Emulator.TURBO_B, "cm" to (1 or (1 shl 8)), "ff" to Emulator.FF_BIT)
+
 class MainActivity : Activity() {
     private lateinit var emu: Emulator
     private lateinit var uiP: UiPrefs
@@ -65,6 +70,8 @@ class MainActivity : Activity() {
     private lateinit var prefs: SharedPreferences
     private var touchMask = 0
     private var padMask = 0
+    private var padBinds: Map<Int, List<String>> = emptyMap() // tecla do controle -> ações (mapeamento em Configurações > Controle)
+    private val padDown = HashSet<Int>()
     private var axisMask = 0
     private var openDialogs = 0
     private var profile = KB_PROFILES[0]
@@ -105,7 +112,7 @@ class MainActivity : Activity() {
         val guard = getSharedPreferences("guard", MODE_PRIVATE)
         emu.onCheatArm = { on -> guard.edit().apply { if (on) putString("cheatGuard", gameName) else remove("cheatGuard") }.commit() }
         emu.onFatal = { m -> toast("O jogo parou por um erro ($m). Use Carregar estado ou volte à biblioteca.") }
-        emu.ffMul = ui.ffMultiplierFor(gid); emu.ffAudio = ui.ffAudio; emu.autoEveryMs = ui.autoSaveMs
+        emu.ffMul = ui.ffMultiplierFor(gid); emu.ffAudio = ui.ffAudio; emu.autoEveryMs = ui.autoSaveMs; padBinds = ui.padBinds(); padDown.clear()
         emu.volume = if (ui.mute) 0f else ui.volumeFor(gid) / 100f
         renderer = GbaRenderer(this, emu) { msg -> toast(msg) }
         renderer.scale = prefs.getInt("scale", 3)
@@ -122,7 +129,7 @@ class MainActivity : Activity() {
             useStick = prefs.getBoolean("stick", false)
             opacity = prefs.getFloat("opacity", 0.85f)
             haptic = prefs.getBoolean("haptic", true)
-            showCombo = ui.showCombo; showTurboA = ui.showTurboA; showTurboB = ui.showTurboB
+            showCombo = ui.showCombo; showTurboA = ui.showTurboA; showTurboB = ui.showTurboB; showFF = ui.showFF
             layoutPort = prefs.getString(layKey("lay_port"), "") ?: ""
             layoutLand = prefs.getString(layKey("lay_land"), "") ?: ""
             onMask = { m -> touchMask = m; pushInput() }
@@ -285,7 +292,7 @@ class MainActivity : Activity() {
     private fun applyPrefsLive() {
         val gid = gameId; val ui = uiP
         applyOrientationNow()
-        emu.ffMul = ui.ffMultiplierFor(gid); emu.ffAudio = ui.ffAudio; emu.autoEveryMs = ui.autoSaveMs
+        emu.ffMul = ui.ffMultiplierFor(gid); emu.ffAudio = ui.ffAudio; emu.autoEveryMs = ui.autoSaveMs; padBinds = ui.padBinds(); padDown.clear()
         emu.volume = if (ui.mute) 0f else ui.volumeFor(gid) / 100f
         renderer.scale = prefs.getInt("scale", 3); renderer.linear = prefs.getBoolean("linear", false)
         renderer.ratio = ui.ratioFor(gid); renderer.rectPort = ui.screenRect(false); renderer.rectLand = ui.screenRect(true)
@@ -299,7 +306,7 @@ class MainActivity : Activity() {
         controls.useStick = prefs.getBoolean("stick", false)
         controls.opacity = prefs.getFloat("opacity", 0.85f)
         controls.haptic = prefs.getBoolean("haptic", true)
-        controls.showCombo = ui.showCombo; controls.showTurboA = ui.showTurboA; controls.showTurboB = ui.showTurboB
+        controls.showCombo = ui.showCombo; controls.showTurboA = ui.showTurboA; controls.showTurboB = ui.showTurboB; controls.showFF = ui.showFF
         controls.reloadSkin(false)
         glView.requestRender()
     }
@@ -704,23 +711,14 @@ class MainActivity : Activity() {
 
     // ---------- gamepad físico ----------
     override fun dispatchKeyEvent(e: KeyEvent): Boolean {
-        val bit = when (e.keyCode) {
-            KeyEvent.KEYCODE_BUTTON_A -> 8
-            KeyEvent.KEYCODE_BUTTON_B -> 0
-            KeyEvent.KEYCODE_BUTTON_L1 -> 10
-            KeyEvent.KEYCODE_BUTTON_R1 -> 11
-            KeyEvent.KEYCODE_BUTTON_START -> 3
-            KeyEvent.KEYCODE_BUTTON_SELECT -> 2
-            KeyEvent.KEYCODE_DPAD_UP -> 4
-            KeyEvent.KEYCODE_DPAD_DOWN -> 5
-            KeyEvent.KEYCODE_DPAD_LEFT -> 6
-            KeyEvent.KEYCODE_DPAD_RIGHT -> 7
-            else -> -1
-        }
-        if (e.keyCode == KeyEvent.KEYCODE_BUTTON_MODE) { if (e.action == KeyEvent.ACTION_DOWN) showMenu(); return true }
-        if (bit >= 0) {
-            padMask = if (e.action == KeyEvent.ACTION_DOWN) padMask or (1 shl bit) else padMask and (1 shl bit).inv()
-            pushInput(); return true
+        val acts = padBinds[e.keyCode]
+        if (acts != null) {
+            if (e.action == KeyEvent.ACTION_DOWN) {
+                if (e.repeatCount == 0) { padDown.add(e.keyCode); if ("menu" in acts) showMenu() }
+            } else if (e.action == KeyEvent.ACTION_UP) padDown.remove(e.keyCode)
+            var m = 0
+            for (k in padDown) padBinds[k]?.forEach { a -> PAD_BITS[a]?.let { m = m or it } }
+            padMask = m; pushInput(); return true
         }
         return super.dispatchKeyEvent(e)
     }

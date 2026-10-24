@@ -2,6 +2,7 @@ package com.meu.gbaemu.ui
 
 import android.app.Activity
 import android.content.Context
+import android.view.KeyEvent
 import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -33,6 +34,16 @@ fun orientCode(v: String): Int = when (v) {
 }
 
 /** Usa o mesmo arquivo de preferências do app ("gba"), então chaves antigas continuam valendo. */
+/** Ações que podem ser ligadas a botões de um controle (Bluetooth/USB): id e nome. */
+val PAD_ACTIONS = listOf("a" to "Botão A", "b" to "Botão B", "l" to "Gatilho L", "r" to "Gatilho R", "start" to "Start", "select" to "Select",
+    "up" to "Direcional ↑", "down" to "Direcional ↓", "left" to "Direcional ←", "right" to "Direcional →",
+    "ta" to "Turbo A", "tb" to "Turbo B", "cm" to "Combo A+B", "ff" to "Fast-forward (segurar)", "menu" to "Menu do jogo")
+/** Botão padrão de cada ação (0 = nenhum). */
+val PAD_DEFAULT = mapOf("a" to KeyEvent.KEYCODE_BUTTON_A, "b" to KeyEvent.KEYCODE_BUTTON_B, "l" to KeyEvent.KEYCODE_BUTTON_L1, "r" to KeyEvent.KEYCODE_BUTTON_R1,
+    "start" to KeyEvent.KEYCODE_BUTTON_START, "select" to KeyEvent.KEYCODE_BUTTON_SELECT,
+    "up" to KeyEvent.KEYCODE_DPAD_UP, "down" to KeyEvent.KEYCODE_DPAD_DOWN, "left" to KeyEvent.KEYCODE_DPAD_LEFT, "right" to KeyEvent.KEYCODE_DPAD_RIGHT,
+    "ta" to KeyEvent.KEYCODE_BUTTON_X, "tb" to KeyEvent.KEYCODE_BUTTON_Y, "cm" to 0, "ff" to KeyEvent.KEYCODE_BUTTON_R2, "menu" to KeyEvent.KEYCODE_BUTTON_MODE)
+
 class Prefs(c: Context) {
     private val ctx = c.applicationContext
     private val sp = ctx.getSharedPreferences("gba", Context.MODE_PRIVATE)
@@ -73,6 +84,13 @@ class Prefs(c: Context) {
     var showCombo get() = b("showCombo", true); set(v) = put("showCombo", v)
     var showTurboA get() = b("showTA", true); set(v) = put("showTA", v)
     var showTurboB get() = b("showTB", true); set(v) = put("showTB", v)
+    var showFF get() = b("showFF", true); set(v) = put("showFF", v)
+    // mapeamento do controle Bluetooth/USB: ação -> código da tecla (0 = sem botão)
+    fun padKey(action: String): Int = s("pad.$action", "").toIntOrNull() ?: PAD_DEFAULT[action] ?: 0
+    fun setPadKey(action: String, code: Int) = put("pad.$action", code.toString())
+    fun resetPad() = sp.edit().apply { PAD_ACTIONS.forEach { remove("pad.${it.first}") } }.apply()
+    /** código da tecla -> ações ligadas a ela */
+    fun padBinds(): Map<Int, List<String>> = PAD_ACTIONS.map { it.first }.filter { padKey(it) != 0 }.groupBy { padKey(it) }
     // avançado
     var autoSave get() = s("autoSave", "2 min"); set(v) = put("autoSave", v)
     val autoSaveMs: Long get() = when (autoSave) { "30 s" -> 30_000L; "1 min" -> 60_000L; "2 min" -> 120_000L; "5 min" -> 300_000L; else -> 0L }

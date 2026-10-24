@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.View
 import android.widget.*
 import com.meu.gbaemu.MainActivity
@@ -43,15 +44,53 @@ class SettingsActivity : Activity() {
     override fun onPause() { super.onPause(); Backup.export(this) }
 
     @Deprecated("Deprecated in Java")
-    override fun onBackPressed() { if (page == "colors") show("adv") else if (page == "skin") show("ctrl") else if (page != "menu") show("menu") else super.onBackPressed() }
+    override fun onBackPressed() { if (page == "colors") show("adv") else if (page == "skin" || page == "pad") show("ctrl") else if (page != "menu") show("menu") else super.onBackPressed() }
 
     private fun show(pg: String) {
         page = pg; body.removeAllViews()
-        title.text = mapOf("menu" to "Configurações", "video" to "Vídeo", "audio" to "Áudio", "ctrl" to "Controle", "shaders" to "Shaders", "adv" to "Avançado", "colors" to "Cores do app", "skin" to "Botões em PNG")[pg]
+        title.text = mapOf("menu" to "Configurações", "video" to "Vídeo", "audio" to "Áudio", "ctrl" to "Controle", "shaders" to "Shaders", "adv" to "Avançado", "colors" to "Cores do app", "skin" to "Botões em PNG", "pad" to "Controle Bluetooth")[pg]
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(T.dp(context, 16), 0, T.dp(context, 16), T.dp(context, 30)) }
-        when (pg) { "menu" -> menu(col); "video" -> video(col); "audio" -> audio(col); "ctrl" -> ctrl(col); "shaders" -> shaders(col); "adv" -> adv(col); "colors" -> colorsPage(col); "skin" -> skinPage(col) }
+        when (pg) { "menu" -> menu(col); "video" -> video(col); "audio" -> audio(col); "ctrl" -> ctrl(col); "shaders" -> shaders(col); "adv" -> adv(col); "colors" -> colorsPage(col); "skin" -> skinPage(col); "pad" -> padPage(col) }
         scroll = ScrollView(this).apply { addView(col) }
         body.addView(scroll)
+    }
+
+    // ---------- mapeamento do controle Bluetooth/USB ----------
+    private var listening: String? = null
+    private var lastKey: TextView? = null
+
+    private fun keyName(c: Int) = if (c == 0) "— nenhum —" else KeyEvent.keyCodeToString(c).removePrefix("KEYCODE_").replace('_', ' ')
+
+    private fun refreshPad() { val y = scroll?.scrollY ?: 0; show("pad"); scroll?.post { scroll?.scrollTo(0, y) } }
+
+    private fun padPage(col: LinearLayout) {
+        col.addView(T.note(this, "Conecte o controle por Bluetooth, toque numa ação e aperte o botão do controle que você quer usar nela. Segure o toque numa ação para deixá-la sem botão. Vale na próxima vez que você abrir um jogo."))
+        lastKey = T.text(this, "Último botão apertado: —", 13f, T.GOLD2).apply { setPadding(0, T.dp(context, 4), 0, T.dp(context, 4)) }
+        col.addView(lastKey)
+        PAD_ACTIONS.forEach { (id, label) ->
+            val on = listening == id
+            col.addView(LinearLayout(this).apply {
+                gravity = Gravity.CENTER_VERTICAL
+                background = T.box(context, T.CARD, if (on) T.GOLD else T.LINE, 12)
+                setPadding(T.dp(context, 14), T.dp(context, 13), T.dp(context, 14), T.dp(context, 13))
+                addView(T.text(context, label), LinearLayout.LayoutParams(0, -2, 1f))
+                addView(T.text(context, if (on) "Aperte um botão…" else keyName(p.padKey(id)), 14f, T.GOLD2, true))
+                setOnClickListener { listening = id; refreshPad() }
+                setOnLongClickListener { p.setPadKey(id, 0); listening = null; refreshPad(); true }
+            }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = T.dp(this@SettingsActivity, 8) })
+        }
+        col.addView(btn("Restaurar botões padrão", false) { p.resetPad(); listening = null; refreshPad() })
+    }
+
+    override fun dispatchKeyEvent(e: KeyEvent): Boolean {
+        if (page == "pad" && e.keyCode != KeyEvent.KEYCODE_BACK && e.keyCode != KeyEvent.KEYCODE_HOME && e.keyCode != KeyEvent.KEYCODE_VOLUME_UP && e.keyCode != KeyEvent.KEYCODE_VOLUME_DOWN) {
+            if (e.action == KeyEvent.ACTION_DOWN && e.repeatCount == 0) {
+                lastKey?.text = "Último botão apertado: " + keyName(e.keyCode)
+                listening?.let { p.setPadKey(it, e.keyCode); listening = null; refreshPad() }
+            }
+            return true
+        }
+        return super.dispatchKeyEvent(e)
     }
 
     private fun btn(text: String, solid: Boolean, click: () -> Unit) = T.text(this, text, 15f, if (solid) T.BG else T.GOLD, true).apply {
@@ -61,7 +100,7 @@ class SettingsActivity : Activity() {
 
     private fun menu(col: LinearLayout) {
         listOf(Triple("video", "Vídeo", "Orientação, filtro e escala"), Triple("audio", "Áudio", "Volume e mudo"),
-            Triple("ctrl", "Controle", "Editor de layout, combo e turbo"), Triple("shaders", "Shaders", "Importar e escolher o filtro visual"),
+            Triple("ctrl", "Controle", "Layout, turbo, fast-forward e controle Bluetooth"), Triple("shaders", "Shaders", "Importar e escolher o filtro visual"),
             Triple("adv", "Avançado", "Fast-forward e mais")).forEach { (k, t, d) ->
             col.addView(LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL; background = T.box(context, T.CARD, T.LINE, 14)
@@ -135,6 +174,11 @@ class SettingsActivity : Activity() {
         col.addView(T.switchRow(this, "Botão combo (A+B)", p.showCombo) { p.showCombo = it })
         col.addView(T.switchRow(this, "Turbo A", p.showTurboA) { p.showTurboA = it })
         col.addView(T.switchRow(this, "Turbo B", p.showTurboB) { p.showTurboB = it })
+        col.addView(T.switchRow(this, "Fast-forward (segure para acelerar)", p.showFF) { p.showFF = it })
+        col.addView(T.note(this, "O botão FF funciona como os turbo: acelera enquanto você segura. A velocidade é a escolhida em Avançado. Arraste ele no editor de layout."))
+        col.addView(T.h(this, "Controle Bluetooth"))
+        col.addView(T.note(this, "Escolha qual botão do controle faz cada ação, inclusive turbo e fast-forward."))
+        col.addView(btn("Mapear botões do controle", true) { show("pad") })
         col.addView(T.h(this, "Geral"))
         col.addView(T.switchRow(this, "Direcional analógico (em vez de D-pad)", p.stick) { p.stick = it })
         col.addView(T.switchRow(this, "Vibração", p.haptic) { p.haptic = it })

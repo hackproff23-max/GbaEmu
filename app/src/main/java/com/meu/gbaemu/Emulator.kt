@@ -123,7 +123,7 @@ class Emulator(private val ctx: Context, private val onFrame: () -> Unit) {
         t.play()
         while (running) {
             if (paused) { Thread.sleep(20); ringTick = SystemClock.uptimeMillis(); continue }
-            if (!fast) {
+            if (!(fast || (baseMask and FF_BIT) != 0)) { // fast = ligado no menu; FF_BIT = botão de fast-forward segurado
                 synchronized(lock) { Native.setInput(mixed()); Native.run(); frame++ }
                 onFrame()
                 val c = Native.audio(buf)
@@ -383,7 +383,7 @@ class Emulator(private val ctx: Context, private val onFrame: () -> Unit) {
     }
 
     companion object {
-        const val TURBO_A = 1 shl 16; const val TURBO_B = 1 shl 17
+        const val TURBO_A = 1 shl 16; const val TURBO_B = 1 shl 17; const val FF_BIT = 1 shl 18
         const val AUTO_FIRST = 10; const val AUTO_COUNT = 5
         const val AUTO_RING_MS = 3 * 60 * 1000L
         const val CHEAT_DELAY_FRAMES = 120
