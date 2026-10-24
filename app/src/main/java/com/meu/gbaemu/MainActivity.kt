@@ -539,6 +539,7 @@ class MainActivity : Activity() {
         menuDlg(gameTitle(), listOf(
             Row("folder", "Abrir ROM") { pick(1, false) },
             Row("layers", "Shaders") { shaderMenu() },
+            Row("gear", "Configurações") { startActivity(Intent(this, SettingsActivity::class.java)) },
             Row("drop", "Cores e efeitos", sub = fxSummary()) { fxDialog() },
             Row("pad", "Controles") { controlsMenu() },
             Row("save", "Salvar estado") { stateDialog(true) },
@@ -546,7 +547,6 @@ class MainActivity : Activity() {
             *(if (uiP.cheatsOn) arrayOf(Row("cheat", "Cheats", sub = "${cheats.count { it.on }} ligado(s)") { cheatsDialog() }) else emptyArray<Row>()),
             Row("ff", "Acelerar", sub = "${emu.ffMul}x · " + (if (emu.fast) "ligado" else "desligado"), checked = emu.fast) { emu.fast = !emu.fast },
             Row("restart", "Reiniciar jogo") { emu.reset(); emu.applyCheats(cheats) },
-            Row("gear", "Configurações") { startActivity(Intent(this, SettingsActivity::class.java)) },
             Row("home", "Voltar à biblioteca") { finish() }), Dlg.cols(this), true)
     }
 

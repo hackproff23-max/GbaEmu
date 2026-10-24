@@ -6,7 +6,7 @@ android {
     namespace = "com.meu.gbaemu"
     compileSdk = 34
     defaultConfig {
-        applicationId = "com.meu.gbaemu"
+        applicationId = "com.emuladorpro.fabrcio.ep"
         minSdk = 24
         targetSdk = 34
         versionCode = 1

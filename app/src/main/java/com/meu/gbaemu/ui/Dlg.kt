@@ -97,7 +97,8 @@ object Dlg {
         }
         if (withCover) col.addView(coverHeader(c, title, cover)) else col.addView(T.text(c, title, 18f, T.GOLD2, true))
         col.addView(body, LinearLayout.LayoutParams(-1, -2).apply { topMargin = T.dp(c, 4) })
-        return ScrollView(c).apply { addView(col) }
+        val maxH = (c.resources.displayMetrics.heightPixels * 0.85f).toInt()
+        return MaxHFrame(c, maxH).apply { addView(ScrollView(c).apply { addView(col) }, android.widget.FrameLayout.LayoutParams(-1, -2)) }
     }
 
     fun content(c: Context, title: String, rows: List<Row>, dismiss: () -> Unit, cols: Int = 1, cover: Bitmap? = null, withCover: Boolean = false): View {
@@ -114,4 +115,13 @@ object Dlg {
             setPadding(0, T.dp(c, 12), 0, T.dp(c, 12))
             setOnClickListener { click() }
         }
+}
+
+/** Limita a altura do diálogo à tela; assim o ScrollView de dentro recebe uma altura finita e rola (menu não fica cortado embaixo). */
+class MaxHFrame(c: Context, private val maxH: Int) : android.widget.FrameLayout(c) {
+    override fun onMeasure(w: Int, h: Int) {
+        val size = View.MeasureSpec.getSize(h)
+        val cap = if (View.MeasureSpec.getMode(h) == View.MeasureSpec.UNSPECIFIED) maxH else minOf(size, maxH)
+        super.onMeasure(w, View.MeasureSpec.makeMeasureSpec(cap, View.MeasureSpec.AT_MOST))
+    }
 }
