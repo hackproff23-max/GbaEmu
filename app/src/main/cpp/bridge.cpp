@@ -39,6 +39,8 @@ static bool (*p_ser)(void *, size_t) = nullptr;
 static bool (*p_unser)(const void *, size_t) = nullptr;
 static void *(*p_mem_data)(unsigned) = nullptr;
 static size_t (*p_mem_size)(unsigned) = nullptr;
+static void (*p_cheat_reset)() = nullptr;
+static void (*p_cheat_set)(unsigned, bool, const char *) = nullptr;
 
 static bool g_inited = false, g_loaded = false;
 static std::string g_sys, g_name;
@@ -113,6 +115,8 @@ JNIEXPORT jboolean JNICALL Java_com_meu_gbaemu_Native_load(JNIEnv *e, jobject, j
               sym(p_ser_size, "retro_serialize_size") && sym(p_ser, "retro_serialize") && sym(p_unser, "retro_unserialize") &&
               sym(p_mem_data, "retro_get_memory_data") && sym(p_mem_size, "retro_get_memory_size");
     if (!ok) { LOG("símbolos libretro ausentes"); unload_core(); return JNI_FALSE; }
+    // cheats são opcionais: se o núcleo não tiver, os ponteiros ficam nulos e as chamadas viram "nada"
+    sym(p_cheat_reset, "retro_cheat_reset"); sym(p_cheat_set, "retro_cheat_set");
     const char *s = e->GetStringUTFChars(sys, nullptr); g_sys = s; e->ReleaseStringUTFChars(sys, s);
     const char *n = e->GetStringUTFChars(name, nullptr); g_name = n; e->ReleaseStringUTFChars(name, n);
     jsize len = e->GetArrayLength(rom);
@@ -171,6 +175,12 @@ JNIEXPORT jboolean JNICALL Java_com_meu_gbaemu_Native_loadState(JNIEnv *e, jobje
     jsize n = e->GetArrayLength(a); std::vector<uint8_t> buf(n);
     e->GetByteArrayRegion(a, 0, n, (jbyte *)buf.data());
     return p_unser(buf.data(), buf.size()) ? JNI_TRUE : JNI_FALSE;
+}
+JNIEXPORT void JNICALL Java_com_meu_gbaemu_Native_cheatReset(JNIEnv *, jobject) { if (g_loaded && p_cheat_reset) p_cheat_reset(); }
+JNIEXPORT void JNICALL Java_com_meu_gbaemu_Native_cheatSet(JNIEnv *e, jobject, jint idx, jboolean on, jstring code) {
+    if (!g_loaded || !p_cheat_set || !code) return;
+    const char *c = e->GetStringUTFChars(code, nullptr);
+    if (c) { p_cheat_set((unsigned)idx, on == JNI_TRUE, c); e->ReleaseStringUTFChars(code, c); }
 }
 JNIEXPORT void JNICALL Java_com_meu_gbaemu_Native_unload(JNIEnv *, jobject) { unload_core(); }
 

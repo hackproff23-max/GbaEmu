@@ -5,6 +5,7 @@ import android.app.AlertDialog
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
@@ -23,13 +24,14 @@ class SettingsActivity : Activity() {
 
     override fun onCreate(b: Bundle?) {
         super.onCreate(b); p = Prefs(this); window.statusBarColor = T.BG
+        p.applyOrientation(this)
         title = T.text(this, "Configurações", 18f, T.GOLD2, true); body = FrameLayout(this)
         setContentView(LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; setBackgroundColor(T.BG)
+            orientation = LinearLayout.VERTICAL; background = Backdrop.drawable(context, p) ?: ColorDrawable(T.BG)
             addView(T.header(context, title, null)); addView(body, LinearLayout.LayoutParams(-1, 0, 1f))
         })
         editColor = (b?.getInt("ec") ?: 0).coerceIn(0, COLOR_KEYS.size - 1)
-        show(b?.getString("page") ?: "menu")
+        show(b?.getString("page") ?: intent.getStringExtra("page") ?: "menu")
         b?.getInt("sy")?.takeIf { it > 0 }?.let { y -> scroll?.post { scroll?.scrollTo(0, y) } }
     }
 
@@ -38,14 +40,16 @@ class SettingsActivity : Activity() {
         o.putString("page", page); o.putInt("ec", editColor); o.putInt("sy", scroll?.scrollY ?: 0)
     }
 
+    override fun onPause() { super.onPause(); Backup.export(this) }
+
     @Deprecated("Deprecated in Java")
-    override fun onBackPressed() { if (page == "colors") show("adv") else if (page != "menu") show("menu") else super.onBackPressed() }
+    override fun onBackPressed() { if (page == "colors") show("adv") else if (page == "skin") show("ctrl") else if (page != "menu") show("menu") else super.onBackPressed() }
 
     private fun show(pg: String) {
         page = pg; body.removeAllViews()
-        title.text = mapOf("menu" to "Configurações", "video" to "Vídeo", "audio" to "Áudio", "ctrl" to "Controle", "shaders" to "Shaders", "adv" to "Avançado", "colors" to "Cores do app")[pg]
+        title.text = mapOf("menu" to "Configurações", "video" to "Vídeo", "audio" to "Áudio", "ctrl" to "Controle", "shaders" to "Shaders", "adv" to "Avançado", "colors" to "Cores do app", "skin" to "Botões em PNG")[pg]
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(T.dp(context, 16), 0, T.dp(context, 16), T.dp(context, 30)) }
-        when (pg) { "menu" -> menu(col); "video" -> video(col); "audio" -> audio(col); "ctrl" -> ctrl(col); "shaders" -> shaders(col); "adv" -> adv(col); "colors" -> colorsPage(col) }
+        when (pg) { "menu" -> menu(col); "video" -> video(col); "audio" -> audio(col); "ctrl" -> ctrl(col); "shaders" -> shaders(col); "adv" -> adv(col); "colors" -> colorsPage(col); "skin" -> skinPage(col) }
         scroll = ScrollView(this).apply { addView(col) }
         body.addView(scroll)
     }
@@ -71,8 +75,11 @@ class SettingsActivity : Activity() {
 
     private fun video(col: LinearLayout) {
         val names = mapOf("auto" to "Automático", "retrato" to "Retrato", "paisagem" to "Paisagem")
-        col.addView(T.h(this, "Orientação do jogo"))
-        col.addView(T.chips(this, names.values.toList(), names[p.orient]!!) { n -> p.orient = names.entries.first { it.value == n }.key; show("video") })
+        col.addView(T.h(this, "Orientação de tela"))
+        col.addView(T.chips(this, names.values.toList(), names[p.orient] ?: names.getValue("auto")) { n ->
+            p.orient = names.entries.first { it.value == n }.key; p.applyOrientation(this); show("video")
+        })
+        col.addView(T.note(this, "Automático segue o giro automático do celular: com o giro travado, a tela não vira sozinha. Retrato e Paisagem ficam fixos em todo o app. Cada jogo pode ter a sua na Biblioteca."))
         col.addView(T.h(this, "Proporção da tela"))
         val ratios = listOf("Original 3:2", "4:3", "16:9", "Tela cheia")
         col.addView(T.chips(this, ratios, p.ratio) { p.ratio = it; show("video") })
@@ -116,6 +123,9 @@ class SettingsActivity : Activity() {
         col.addView(btn("Abrir editor — $editKb", true) {
             startActivity(Intent(this, MainActivity::class.java).putExtra("edit_layout", true).putExtra("profile", editKb))
         })
+        col.addView(T.h(this, "Botões em PNG"))
+        col.addView(T.note(this, "Escolha a imagem de cada botão, ou exporte os PNGs para a memória interna, edite em outro app e use aqui mesmo."))
+        col.addView(btn("Escolher / exportar botões PNG", true) { show("skin") })
         col.addView(T.h(this, "Botões extras"))
         col.addView(T.switchRow(this, "Botão combo (A+B)", p.showCombo) { p.showCombo = it })
         col.addView(T.switchRow(this, "Turbo A", p.showTurboA) { p.showTurboA = it })
@@ -158,6 +168,38 @@ class SettingsActivity : Activity() {
         col.addView(T.chips(this, AUTO_STEPS, p.autoSave) { p.autoSave = it; show("adv") })
         col.addView(T.switchRow(this, "Auto-resume (continuar de onde parou)", p.autoResume) { p.autoResume = it })
         col.addView(T.note(this, "Ao fechar o jogo ele salva sozinho; ao abrir de novo volta exatamente de onde você parou. Há 5 slots manuais + 1 automático. Vale na próxima vez que você abrir um jogo."))
+        col.addView(T.h(this, "Cheats"))
+        col.addView(T.switchRow(this, "Mostrar menu de cheats no jogo", p.cheatsOn) { p.cheatsOn = it })
+        col.addView(T.note(this, "Ligado: aparece “Cheats” no menu do jogo (☰). Cada jogo guarda seus códigos em EmuladorPro/Cheats."))
+        col.addView(T.h(this, "Imagem de fundo"))
+        col.addView(T.note(this, "PNG, JPG ou GIF (animado). Aparece atrás da tela do jogo e, se quiser, nos menus do app."))
+        col.addView(btn(if (p.bgFile() != null) "Trocar imagem de fundo" else "Escolher imagem de fundo", true) {
+            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); type = "image/*" }, 5)
+        })
+        if (p.bgFile() != null) {
+            col.addView(btn("Remover fundo", false) { p.clearBg(); recreate() })
+            col.addView(T.switchRow(this, "Usar o fundo também nos menus", p.bgMenus) { p.bgMenus = it; recreate() })
+            col.addView(T.seek(this, "Escurecer o fundo", 0, 90, p.bgDim.coerceIn(0, 90)) { p.bgDim = it })
+            col.addView(T.note(this, "O escurecimento vale na próxima vez que você abrir o jogo ou o app."))
+        }
+        col.addView(T.h(this, "Pasta EmuladorPro"))
+        col.addView(T.note(this, Store.root(this).absolutePath + "\nConfiguracoes · SaveStates · Saves · Cheats · Capas · Controles"))
+        if (!Store.canUseShared(this)) {
+            col.addView(T.note(this, "Sem permissão de acesso à memória interna, a pasta fica numa área privada do app. Permita para ela aparecer no seu celular."))
+            col.addView(btn("Permitir acesso à memória interna", true) { Store.requestAccess(this) })
+        }
+        col.addView(btn("Salvar configurações na pasta agora", false) {
+            Backup.export(this); Toast.makeText(this, "Configurações salvas em Configuracoes", Toast.LENGTH_SHORT).show()
+        })
+        col.addView(btn("Restaurar configurações da pasta", false) {
+            AlertDialog.Builder(this, AlertDialog.THEME_DEVICE_DEFAULT_DARK).setTitle("Restaurar configurações?")
+                .setMessage("As configurações salvas na pasta Configuracoes substituem as atuais.")
+                .setPositiveButton("Restaurar") { _, _ ->
+                    val ok = Backup.restore(this)
+                    Toast.makeText(this, if (ok) "Configurações restauradas" else "Nenhum arquivo de configurações encontrado", Toast.LENGTH_LONG).show()
+                    if (ok) { p = Prefs(this); recreate() }
+                }.setNegativeButton("Cancelar", null).show()
+        })
         col.addView(T.h(this, "Aparência"))
         col.addView(btn("Importar fonte das letras (.ttf)", true) {
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); type = "*/*" }, 3)
@@ -184,6 +226,8 @@ class SettingsActivity : Activity() {
         super.onActivityResult(req, res, data)
         if (res != RESULT_OK || data == null) return
         if (req == 3) { importFont(data.data); return }
+        if (req == 4) { importSkin(data.data); return }
+        if (req == 5) { importBg(data.data); return }
         if (req != 2) return
         val uris = ArrayList<Uri>()
         data.clipData?.let { cd -> for (i in 0 until cd.itemCount) uris += cd.getItemAt(i).uri }
@@ -197,6 +241,59 @@ class SettingsActivity : Activity() {
         }
         Toast.makeText(this, "$ok arquivo(s) importado(s)" + if (skip > 0) " • $skip ignorado(s) (aceito: .glsl, .glslp, .vsh/.fsh e imagens PNG)" else "", Toast.LENGTH_LONG).show()
         show("shaders")
+    }
+
+    private fun importSkin(u: Uri?) {
+        val n = p.pendingSkin
+        if (u == null || n.isBlank()) return
+        val ok = p.importSkin(n, u)
+        Toast.makeText(this, if (ok) "${SKIN_LABELS[n] ?: n}: imagem aplicada" else "Não consegui ler essa imagem", Toast.LENGTH_LONG).show()
+        show("skin")
+    }
+
+    private fun importBg(u: Uri?) {
+        if (u == null) return
+        val ok = try { contentResolver.openInputStream(u)?.use { p.importBg(it) } ?: false } catch (e: Exception) { false }
+        Toast.makeText(this, if (ok) "Fundo aplicado" else "Escolha uma imagem PNG, JPG ou GIF", Toast.LENGTH_LONG).show()
+        if (ok) recreate()
+    }
+
+    private fun skinPage(col: LinearLayout) {
+        col.addView(T.note(this, "Cada botão tem o seu PNG. Toque em “Escolher” para trocar a imagem de um botão. Os arquivos ficam em:\n" + Store.dir(this, "controls").absolutePath))
+        col.addView(T.note(this, "Para editar em outro app: toque em “Exportar”, edite os PNGs da pasta Controles e volte para o jogo. O app lê os arquivos da pasta sozinho. O botão ↺ volta ao padrão."))
+        col.addView(btn("Exportar botões para a memória interna", true) {
+            val n = p.exportSkinDefaults()
+            Toast.makeText(this, if (n > 0) "$n arquivo(s) copiado(s) para a pasta Controles" else "Os arquivos já estão na pasta Controles", Toast.LENGTH_LONG).show()
+            show("skin")
+        })
+        SKIN_NAMES.forEach { n ->
+            val inFolder = p.hasSkinFile(n)
+            val row = LinearLayout(this).apply {
+                gravity = Gravity.CENTER_VERTICAL; background = T.box(context, T.CARD, T.LINE, 12)
+                setPadding(T.dp(context, 12), T.dp(context, 10), T.dp(context, 12), T.dp(context, 10))
+            }
+            row.addView(ImageView(this).apply {
+                scaleType = ImageView.ScaleType.FIT_CENTER; setBackgroundColor(0x33FFFFFF)
+                p.skinPreview(n)?.let { setImageBitmap(it) }
+            }, LinearLayout.LayoutParams(T.dp(this, 56), T.dp(this, 56)))
+            val txt = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(T.text(context, SKIN_LABELS[n] ?: n, 15f)); addView(T.text(context, if (inFolder) "arquivo na pasta Controles" else "padrão do app", 12f, T.MUT))
+            }
+            row.addView(txt, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = T.dp(this@SettingsActivity, 12) })
+            row.addView(T.chip(this, "Escolher", false) {
+                p.pendingSkin = n
+                startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); type = "image/*" }, 4)
+            })
+            row.addView(T.chip(this, "↺", false) { p.deleteSkin(n); show("skin") }, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = T.dp(this@SettingsActivity, 8) })
+            col.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = T.dp(this@SettingsActivity, 8) })
+        }
+        col.addView(btn("Restaurar todos os botões padrão", false) {
+            AlertDialog.Builder(this, AlertDialog.THEME_DEVICE_DEFAULT_DARK).setTitle("Restaurar todos os botões?")
+                .setMessage("Os PNGs da pasta Controles serão apagados e o app volta a usar as imagens padrão.")
+                .setPositiveButton("Restaurar") { _, _ -> SKIN_NAMES.forEach { p.deleteSkin(it) }; show("skin") }
+                .setNegativeButton("Cancelar", null).show()
+        })
     }
 
     private fun importFont(u: Uri?) {

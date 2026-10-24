@@ -1,4 +1,39 @@
-No Termux, na pasta do projeto:
-  unzip -o ~/storage/downloads/gba-emu-patch-4.zip -d ~/GbaEmu
-  cd ~/GbaEmu && git add . && git commit -m "Shaders multipass, menu tematico com icones, fonte em tudo" && git push
-Depois baixe o APK em Actions > Build APK > Artifacts.
+PATCH 5 - GBA Emu
+=================
+Termux, na pasta do projeto (troque o caminho do zip se ele estiver em outro lugar):
+
+  cd ~/GbaEmu
+  unzip -o ~/storage/downloads/gba-emu-patch-5.zip -d ~/GbaEmu
+  git add .
+  git commit -m "Cheats, shader ao vivo, orientacao, botoes PNG, pasta EmuladorPro, fundo"
+  git push
+
+Depois baixe o APK em: GitHub > Actions > Build APK > Artifacts (GbaEmu-debug).
+Se a compilacao der erro, copie a mensagem vermelha do Actions e me mande.
+
+O QUE MUDOU
+-----------
+- Menu de cheats no jogo: Configuracoes > Avancado > "Mostrar menu de cheats no jogo". Aparece "Cheats" no menu (☰).
+- Shader aplicada sem sair do jogo: ao voltar das Configuracoes tudo e relido; no menu do jogo
+  Shaders > "Escolher shader deste jogo" troca na hora.
+- Orientacao de tela: Configuracoes > Video > Orientacao de tela: Automatico / Retrato / Paisagem.
+  Automatico segue o giro automatico do celular (com o giro travado nao vira sozinho).
+- Botoes PNG: Configuracoes > Controle > "Escolher / exportar botoes PNG" (tambem em ☰ > Controles > Botoes em PNG).
+- Saves .sav, estados, cheats, capas e botoes ficam na pasta EmuladorPro (veja abaixo).
+- Fundo: Configuracoes > Avancado > Imagem de fundo (PNG, JPG ou GIF).
+
+PASTA EmuladorPro (memoria interna)
+-----------------------------------
+  EmuladorPro/Configuracoes   configuracoes.json (copia das configuracoes) e fundo.png/jpg/gif
+  EmuladorPro/SaveStates      <jogo>.st1 ... st5, <jogo>.st0 (auto-save) e fotos .jpg
+  EmuladorPro/Saves           <jogo>.sav
+  EmuladorPro/Cheats          <jogo>.cht   (uma linha por cheat:  1|Nome|CODIGO   1=ligado, 0=desligado)
+  EmuladorPro/Capas           <jogo>.jpg
+  EmuladorPro/Controles       a.png b.png l.png r.png start.png select.png dpad.png stick_base.png stick_knob.png menu.png
+
+No primeiro uso o app pede "acesso a todos os arquivos" para criar essa pasta. Sem a permissao, ele usa uma
+pasta privada do app e passa tudo para EmuladorPro quando voce permitir (Configuracoes > Avancado).
+Saves e estados antigos sao copiados sozinhos para a nova pasta na primeira vez que o jogo abre.
+
+CHEATS: codigos GameShark / Action Replay / CodeBreaker do GBA, uma linha por codigo:
+  82025840 0001     ou     12345678 9ABCDEF0

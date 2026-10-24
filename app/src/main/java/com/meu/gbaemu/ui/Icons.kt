@@ -107,6 +107,7 @@ class IconDrawable(private val name: String, private val color: Int = T.GOLD) : 
                 dot(9f, 7f, 2.2f); dot(15f, 12f, 2.2f); dot(8f, 17f, 2.2f)
             }
             "check" -> c.drawPath(path(5f, 12.5f, 10f, 17.5f, 19f, 7f), p)
+            "cheat" -> c.drawPath(path(12f, 3f, 14.2f, 9.8f, 21f, 12f, 14.2f, 14.2f, 12f, 21f, 9.8f, 14.2f, 3f, 12f, 9.8f, 9.8f, close = true), p)
             else -> dot(12f, 12f, 3f)
         }
         c.restore()

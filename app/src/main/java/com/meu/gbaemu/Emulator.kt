@@ -6,6 +6,8 @@ import android.media.AudioFormat
 import android.graphics.Bitmap
 import android.media.AudioTrack
 import android.os.SystemClock
+import com.meu.gbaemu.ui.Cheat
+import com.meu.gbaemu.ui.Store
 import java.io.File
 
 class Emulator(private val ctx: Context, private val onFrame: () -> Unit) {
@@ -26,7 +28,26 @@ class Emulator(private val ctx: Context, private val onFrame: () -> Unit) {
     private var thread: Thread? = null
     private var track: AudioTrack? = null
     private var key = ""
-    private val savesDir: File get() = File(ctx.filesDir, "saves").also { it.mkdirs() }
+    private var base = "jogo"
+    private var lastSram: ByteArray? = null
+    private var lastSramMs = 0L
+    // tudo fica em EmuladorPro: Saves (.sav) e SaveStates
+    private val savesDir: File get() = Store.dir(ctx, "saves")
+    private val statesDir: File get() = Store.dir(ctx, "states")
+    fun saveFile() = File(savesDir, "$base.sav")
+
+    /** Traz para EmuladorPro os saves e estados da versão antiga (pasta interna do app), sem apagar nada. */
+    private fun migrateLegacy() {
+        val old = File(ctx.filesDir, "saves")
+        if (!old.isDirectory) return
+        val pairs = ArrayList<Pair<File, File>>()
+        pairs.add(File(old, "$key.srm") to saveFile())
+        for (s in 0..5) {
+            pairs.add(File(old, "$key.st$s") to stateFile(s))
+            pairs.add(File(old, "$key.st$s.jpg") to thumbFile(s))
+        }
+        for ((a, b) in pairs) if (a.exists() && !b.exists()) try { a.copyTo(b) } catch (e: Exception) { }
+    }
 
     /** Retorna null em sucesso, ou a mensagem de erro. */
     fun start(rom: ByteArray, name: String): String? {
@@ -34,9 +55,12 @@ class Emulator(private val ctx: Context, private val onFrame: () -> Unit) {
         val core = File(ctx.applicationInfo.nativeLibraryDir, "libmgba_core.so")
         if (!core.exists()) return "Núcleo mGBA não encontrado no APK (libmgba_core.so)"
         key = name.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        base = Store.base(name); lastSram = null
+        migrateLegacy()
         val ok = synchronized(lock) { Native.load(core.absolutePath, rom, name, ctx.filesDir.absolutePath) }
         if (!ok) return "Falha ao carregar a ROM"
-        File(savesDir, "$key.srm").takeIf { it.exists() }?.let { f -> synchronized(lock) { Native.writeSram(f.readBytes()) } }
+        (saveFile().takeIf { it.exists() } ?: File(savesDir, "$base.srm").takeIf { it.exists() })
+            ?.let { f -> synchronized(lock) { Native.writeSram(f.readBytes()) } }
         val rate = Native.sampleRate().toInt().coerceAtLeast(8000)
         val min = AudioTrack.getMinBufferSize(rate, AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_16BIT)
         val t = AudioTrack.Builder()
@@ -98,6 +122,8 @@ class Emulator(private val ctx: Context, private val onFrame: () -> Unit) {
                 val now = SystemClock.uptimeMillis()
                 if (now - lastAuto >= autoEveryMs) { lastAuto = now; saveState(0) } // slot 0 = auto-save
             }
+            val t0 = SystemClock.uptimeMillis()
+            if (t0 - lastSramMs >= 15000) { lastSramMs = t0; saveSram() } // grava o .sav sozinho se mudou
         }
     }
 
@@ -112,14 +138,30 @@ class Emulator(private val ctx: Context, private val onFrame: () -> Unit) {
 
     fun reset() { synchronized(lock) { Native.reset() } }
 
+    /** Reaplica no núcleo todos os cheats ligados (limpa os anteriores primeiro). */
+    fun applyCheats(list: List<Cheat>) {
+        if (!loaded) return
+        synchronized(lock) {
+            Native.cheatReset()
+            var i = 0
+            for (c in list) if (c.on) for (line in c.code.split('+')) if (line.isNotBlank()) Native.cheatSet(i++, true, line)
+        }
+    }
+
     fun saveSram() {
         if (!loaded) return
         val d = synchronized(lock) { Native.readSram() } ?: return
-        File(savesDir, "$key.srm").writeBytes(d)
+        if (lastSram?.contentEquals(d) == true) return
+        try {
+            val f = saveFile(); val tmp = File(f.path + ".tmp")
+            tmp.writeBytes(d)
+            if (!tmp.renameTo(f)) { f.writeBytes(d); tmp.delete() }
+            lastSram = d
+        } catch (e: Exception) { }
     }
 
-    fun stateFile(slot: Int) = File(savesDir, "$key.st$slot")
-    fun thumbFile(slot: Int) = File(savesDir, "$key.st$slot.jpg")
+    fun stateFile(slot: Int) = File(statesDir, "$base.st$slot")
+    fun thumbFile(slot: Int) = File(statesDir, "$base.st$slot.jpg")
 
     /** Foto da tela atual (do quadro bruto do núcleo, sem shader). */
     fun snapshot(): Bitmap? = try {
@@ -150,7 +192,7 @@ class Emulator(private val ctx: Context, private val onFrame: () -> Unit) {
 
     fun loadState(slot: Int): Boolean {
         if (!loaded) return false
-        val f = File(savesDir, "$key.st$slot")
+        val f = stateFile(slot)
         if (!f.exists()) return false
         return synchronized(lock) { Native.loadState(f.readBytes()) }
     }

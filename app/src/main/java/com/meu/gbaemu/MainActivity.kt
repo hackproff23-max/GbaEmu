@@ -4,8 +4,12 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import com.meu.gbaemu.ui.Backup
+import com.meu.gbaemu.ui.Cheat
+import com.meu.gbaemu.ui.Cheats
 import com.meu.gbaemu.ui.Dlg
 import com.meu.gbaemu.ui.KB_PROFILES
+import com.meu.gbaemu.ui.orientCode
 import com.meu.gbaemu.ui.Row
 import com.meu.gbaemu.ui.T
 import com.meu.gbaemu.ui.SH_GLOBAL
@@ -17,6 +21,7 @@ import android.content.res.ColorStateList
 import android.graphics.BitmapFactory
 import android.graphics.drawable.ColorDrawable
 import android.graphics.Color
+import android.text.InputType
 import android.text.format.DateFormat
 import android.view.Gravity
 import android.widget.ImageView
@@ -33,6 +38,7 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.SeekBar
 import android.widget.Toast
@@ -53,8 +59,11 @@ class MainActivity : Activity() {
     private var openDialogs = 0
     private var profile = KB_PROFILES[0]
     private var editOnly = false
+    private var gameId: String? = null
+    private var gameName = ""
+    private var cheats = ArrayList<Cheat>()
+    private var bgSig = ""
     private fun layKey(base: String) = if (profile == KB_PROFILES[0]) base else "$base.$profile"
-    private val skinNames = setOf("dpad", "stick_base", "stick_knob", "a", "b", "l", "r", "start", "select", "menu")
 
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
@@ -62,13 +71,10 @@ class MainActivity : Activity() {
         uiP = UiPrefs(this)
         val ui = uiP
         val gid = intent.getStringExtra("game_id")
+        gameId = gid
         editOnly = intent.getBooleanExtra("edit_layout", false)
         profile = intent.getStringExtra("profile") ?: gid?.let { ui.kbFor(it) } ?: KB_PROFILES[0]
-        requestedOrientation = if (editOnly) ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR else when (ui.orientFor(gid)) {
-            "retrato" -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-            "paisagem" -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-            else -> ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
-        }
+        applyOrientationNow()
         if (Build.VERSION.SDK_INT >= 28) {
             val lp = window.attributes
             lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
@@ -82,11 +88,7 @@ class MainActivity : Activity() {
         renderer.scale = prefs.getInt("scale", 3)
         renderer.linear = prefs.getBoolean("linear", false)
         renderer.ratio = ui.ratioFor(gid); renderer.rectPort = ui.screenRect(false); renderer.rectLand = ui.screenRect(true)
-        renderer.shaderKeys = when (val sh = gid?.let { ui.shaderFor(it) } ?: SH_GLOBAL) {
-            SH_GLOBAL -> enabledShaders()
-            SH_NONE -> emptyList()
-            else -> listOf(sh).filter { it in availableShaders() }
-        }
+        renderer.shaderKeys = shaderKeysFor(gid)
         glView = GLSurfaceView(this).apply {
             setEGLContextClientVersion(2)
             setRenderer(renderer)
@@ -168,7 +170,6 @@ class MainActivity : Activity() {
                 try { loadRom(u) } catch (e: Exception) { toast("Erro: ${e.message}") }
             }
             2 -> importShaders(uris)
-            3 -> importSkin(uris)
         }
     }
 
@@ -188,7 +189,38 @@ class MainActivity : Activity() {
         }
         val err = emu.start(bytes, name)
         if (err != null) toast(err)
-        else if (uiP.autoResume && !editOnly && emu.loadState(0)) toast("Continuando de onde você parou")
+        else {
+            gameName = name
+            cheats = Cheats.load(this, name); emu.applyCheats(cheats)
+            if (uiP.autoResume && !editOnly && emu.loadState(0)) toast("Continuando de onde você parou")
+        }
+    }
+
+    // ---------- orientação e configurações ao vivo ----------
+    private fun applyOrientationNow() {
+        requestedOrientation = if (editOnly) ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR else orientCode(uiP.orientFor(gameId))
+    }
+
+    /** Lê de novo as configurações (shader, tela, controles, som, fundo...). Roda ao voltar das Configurações: nada exige sair do jogo. */
+    private fun applyPrefsLive() {
+        val gid = gameId; val ui = uiP
+        applyOrientationNow()
+        emu.ffMul = ui.ffMultiplierFor(gid); emu.ffAudio = ui.ffAudio; emu.autoEveryMs = ui.autoSaveMs
+        emu.volume = if (ui.mute) 0f else ui.volumeFor(gid) / 100f
+        renderer.scale = prefs.getInt("scale", 3); renderer.linear = prefs.getBoolean("linear", false)
+        renderer.ratio = ui.ratioFor(gid); renderer.rectPort = ui.screenRect(false); renderer.rectLand = ui.screenRect(true)
+        val keys = shaderKeysFor(gid)
+        if (keys != renderer.shaderKeys) renderer.shaderKeys = keys
+        renderer.dirty = true
+        val bg = ui.bgFile()
+        val sig = "${bg?.path}|${bg?.lastModified()}|${ui.bgDim}"
+        if (sig != bgSig) { bgSig = sig; renderer.bgDim = ui.bgDim; renderer.setBackground(bg) }
+        controls.useStick = prefs.getBoolean("stick", false)
+        controls.opacity = prefs.getFloat("opacity", 0.85f)
+        controls.haptic = prefs.getBoolean("haptic", true)
+        controls.showCombo = ui.showCombo; controls.showTurboA = ui.showTurboA; controls.showTurboB = ui.showTurboB
+        controls.reloadSkin(false)
+        glView.requestRender()
     }
 
     // ---------- shaders ----------
@@ -201,6 +233,12 @@ class MainActivity : Activity() {
         }.sorted()
     }
 
+    private fun shaderKeysFor(gid: String?): List<String> = when (val sh = gid?.let { uiP.shaderFor(it) } ?: SH_GLOBAL) {
+        SH_GLOBAL -> enabledShaders()
+        SH_NONE -> emptyList()
+        else -> listOf(sh).filter { it in availableShaders() }
+    }
+
     private fun enabledShaders(): List<String> {
         val av = availableShaders()
         return (prefs.getString("sh_on", "") ?: "").split("\n").filter { it.isNotBlank() && it in av }
@@ -208,7 +246,28 @@ class MainActivity : Activity() {
 
     private fun applyShaders(list: List<String>) {
         prefs.edit().putString("sh_on", list.joinToString("\n")).apply()
+        gameId?.let { uiP.setShader(it, SH_GLOBAL) } // a escolha feita aqui passa a valer neste jogo também
         renderer.shaderKeys = list; renderer.dirty = true; glView.requestRender()
+    }
+
+    /** Escolhe o shader só deste jogo e já aplica na tela, sem sair. */
+    private fun setGameShader(v: String) {
+        val gid = gameId
+        if (gid == null) {
+            applyShaders(if (v == SH_NONE) emptyList() else if (v == SH_GLOBAL) enabledShaders() else listOf(v))
+            return
+        }
+        uiP.setShader(gid, v)
+        renderer.shaderKeys = shaderKeysFor(gid); renderer.dirty = true; glView.requestRender()
+    }
+
+    private fun quickShaderDialog() {
+        val cur = gameId?.let { uiP.shaderFor(it) } ?: SH_GLOBAL
+        val rows = ArrayList<Row>()
+        rows.add(Row("power", "Padrão das configurações", checked = cur == SH_GLOBAL) { setGameShader(SH_GLOBAL) })
+        rows.add(Row("power", "Sem shader (pixels puros)", checked = cur == SH_NONE) { setGameShader(SH_NONE) })
+        for (k in availableShaders()) rows.add(Row(if (k.endsWith(".glslp", true)) "layers" else "filter", k, checked = cur == k) { setGameShader(k) })
+        menuDlg("Shader deste jogo", rows)
     }
 
     private fun importShaders(uris: List<Uri>) {
@@ -274,6 +333,7 @@ class MainActivity : Activity() {
 
     private fun shaderMenu() {
         menuDlg("Shaders", listOf(
+            Row("filter", "Escolher shader deste jogo", sub = "aplica na hora, sem sair") { quickShaderDialog() },
             Row("import", "Importar shaders", sub = ".glsl, .glslp (multipass), .vsh/.fsh e PNGs dos presets") { pick(2, true) },
             Row("layers", "Ativar e ordenar shaders") { shadersDialog() },
             Row("trash", "Remover shader") { removeShaderDialog() },
@@ -289,18 +349,6 @@ class MainActivity : Activity() {
     }
 
     // ---------- controles ----------
-    private fun importSkin(uris: List<Uri>) {
-        val dir = File(filesDir, "skin").also { it.mkdirs() }
-        var ok = 0; var skip = 0
-        for (u in uris) {
-            val nm = displayName(u).lowercase()
-            if (nm.endsWith(".png") && nm.removeSuffix(".png") in skinNames) {
-                contentResolver.openInputStream(u)?.use { i -> File(dir, nm).outputStream().use { o -> i.copyTo(o) } }; ok++
-            } else skip++
-        }
-        controls.reloadSkin()
-        toast("$ok PNG(s) aplicado(s)" + if (skip > 0) " • $skip ignorado(s). Nomes válidos: ${skinNames.joinToString(", ") { "$it.png" }}" else "")
-    }
 
     private fun opacityDialog() {
         val lb = T.text(this, "", 14f, T.MUT)
@@ -332,8 +380,9 @@ class MainActivity : Activity() {
             },
             Row("pencil", "Editar layout", sub = "arrastar e pinça") { controls.editMode = true },
             Row("restart", "Resetar posições") { controls.resetLayout() },
-            Row("image", "Importar PNGs dos botões", sub = "a, b, l, r, start, select, dpad, stick_base, stick_knob, menu") { pick(3, true) },
-            Row("trash", "Restaurar PNGs padrão") { File(filesDir, "skin").listFiles()?.forEach { it.delete() }; controls.reloadSkin() },
+            Row("image", "Botões em PNG", sub = "escolher a imagem de cada botão, exportar para editar") {
+                startActivity(Intent(this, SettingsActivity::class.java).putExtra("page", "skin"))
+            },
             Row("drop", "Opacidade") { opacityDialog() },
             Row("vibrate", "Vibração", sub = if (controls.haptic) "ligada" else "desligada") {
                 controls.haptic = !controls.haptic; prefs.edit().putBoolean("haptic", controls.haptic).apply()
@@ -378,10 +427,74 @@ class MainActivity : Activity() {
             Row("pad", "Controles") { controlsMenu() },
             Row("save", "Salvar estado") { stateDialog(true) },
             Row("load", "Carregar estado") { stateDialog(false) },
+            *(if (uiP.cheatsOn) arrayOf(Row("cheat", "Cheats", sub = "${cheats.count { it.on }} ligado(s)") { cheatsDialog() }) else emptyArray<Row>()),
             Row("ff", "Acelerar (${emu.ffMul}x)", sub = if (emu.fast) "ligado" else "desligado", checked = emu.fast) { emu.fast = !emu.fast },
             Row("restart", "Reiniciar jogo") { emu.reset() },
             Row("gear", "Configurações") { startActivity(Intent(this, SettingsActivity::class.java)) },
             Row("home", "Voltar à biblioteca") { finish() }))
+    }
+
+    // ---------- cheats ----------
+    private fun saveCheats() { Cheats.save(this, gameName, cheats); emu.applyCheats(cheats) }
+
+    private fun cheatsDialog() {
+        lateinit var dlg: AlertDialog
+        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        if (cheats.isEmpty()) body.addView(T.note(this, "Nenhum cheat neste jogo ainda. Toque em “Adicionar cheat”."))
+        cheats.forEachIndexed { i, c ->
+            val code = if (c.code.length > 40) c.code.take(40) + "…" else c.code
+            val v = Dlg.rowView(this, null, c.name, code, c.on) {
+                c.on = !c.on; saveCheats(); dlg.dismiss(); cheatsDialog()
+            }
+            v.setOnLongClickListener { dlg.dismiss(); cheatOptions(i); true }
+            Dlg.add(this, body, v)
+        }
+        Dlg.add(this, body, Dlg.button(this, "＋  Adicionar cheat", true) { dlg.dismiss(); cheatEdit(-1) })
+        if (cheats.isNotEmpty()) body.addView(T.note(this, "Toque para ligar/desligar · segure para editar ou excluir"))
+        dlg = showDlgGet(AlertDialog.Builder(this, THEME).setView(Dlg.frame(this, "Cheats", body)))
+        themed(dlg)
+    }
+
+    private fun cheatOptions(i: Int) {
+        val c = cheats.getOrNull(i) ?: return
+        menuDlg(c.name, listOf(
+            Row("pencil", "Editar") { cheatEdit(i) },
+            Row("trash", "Excluir") { cheats.removeAt(i); saveCheats(); cheatsDialog() }))
+    }
+
+    private fun cheatEdit(idx: Int) {
+        val old = cheats.getOrNull(idx)
+        fun field(dica: String, v: String, multi: Boolean) = EditText(this).apply {
+            setHint(dica); setHintTextColor(T.MUT); setTextColor(T.TX); setText(v); T.font?.let { typeface = it }
+            background = T.box(this@MainActivity, T.CARD, T.LINE)
+            setPadding(T.dp(context, 14), T.dp(context, 10), T.dp(context, 14), T.dp(context, 10))
+            if (multi) {
+                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                minLines = 3; gravity = Gravity.TOP
+            } else setSingleLine()
+        }
+        val nome = field("Nome do cheat", old?.name ?: "", false)
+        val cod = field("Código (GameShark / Action Replay / CodeBreaker)", old?.code?.replace('+', '\n') ?: "", true)
+        lateinit var dlg: AlertDialog
+        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        Dlg.add(this, body, nome); Dlg.add(this, body, cod)
+        body.addView(T.note(this, "Uma linha por código, no formato 82025840 0001 ou 12345678 9ABCDEF0. Ex.: vidas infinitas."))
+        val row = LinearLayout(this).apply {
+            addView(Dlg.button(this@MainActivity, "Cancelar", false) { dlg.dismiss(); cheatsDialog() }, LinearLayout.LayoutParams(0, -2, 1f).apply { rightMargin = T.dp(this@MainActivity, 8) })
+            addView(Dlg.button(this@MainActivity, "Salvar", true) {
+                val norm = Cheats.normalize(cod.text.toString())
+                if (norm == null) toast("Código inválido. Use linhas como 82025840 0001 ou 12345678 9ABCDEF0")
+                else {
+                    val nm = nome.text.toString().trim().ifEmpty { "Cheat ${cheats.size + 1}" }
+                    if (old == null) cheats.add(Cheat(nm, norm, true)) else { old.name = nm; old.code = norm }
+                    saveCheats(); dlg.dismiss(); cheatsDialog()
+                }
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+        }
+        Dlg.add(this, body, row)
+        dlg = showDlgGet(AlertDialog.Builder(this, THEME).setView(Dlg.frame(this, if (old == null) "Novo cheat" else "Editar cheat", body)))
+        themed(dlg)
+        dlg.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
     }
 
     // ---------- gamepad físico ----------
@@ -428,7 +541,8 @@ class MainActivity : Activity() {
     override fun onWindowFocusChanged(f: Boolean) { super.onWindowFocusChanged(f); if (f) immersive() }
     override fun onPause() { super.onPause(); emu.paused = true; emu.saveSram()
         if (::uiP.isInitialized && (uiP.autoSaveMs > 0 || uiP.autoResume)) emu.saveState(0)
+        Backup.export(this)
         glView.onPause() }
-    override fun onResume() { super.onResume(); glView.onResume(); if (openDialogs == 0) emu.paused = false; immersive() }
+    override fun onResume() { super.onResume(); applyPrefsLive(); glView.onResume(); if (openDialogs == 0) emu.paused = false; immersive() }
     override fun onDestroy() { super.onDestroy(); emu.stop() }
 }

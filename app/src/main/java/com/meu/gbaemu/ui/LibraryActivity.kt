@@ -24,11 +24,13 @@ class LibraryActivity : Activity() {
     private lateinit var chipHost: FrameLayout
     private val covers = HashMap<String, Bitmap?>()
     private var sig = 0
+    private var bgSig = ""
     private var filter = "Todos"; private var sort = "A-Z"; private var q = ""
 
     override fun onCreate(b: Bundle?) {
         super.onCreate(b); p = Prefs(this); sig = T.sig(); window.statusBarColor = T.BG
-        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(T.BG) }
+        p.applyOrientation(this); bgSig = Backdrop.sig(p)
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = Backdrop.drawable(context, p) ?: ColorDrawable(T.BG) }
         val gear = ImageButton(this).apply {
             setImageResource(com.meu.gbaemu.R.drawable.ic_gear)
             background = T.box(this@LibraryActivity, T.CARD, T.GOLD); contentDescription = "Configurações"
@@ -60,7 +62,26 @@ class LibraryActivity : Activity() {
         setContentView(root)
     }
 
-    override fun onResume() { super.onResume(); if (T.sig() != sig) { recreate(); return }; chips(); fill() }
+    override fun onResume() {
+        super.onResume()
+        // reinstalou o app? as configurações salvas em EmuladorPro/Configuracoes voltam sozinhas
+        if (Backup.restoreIfEmpty(this)) { recreate(); return }
+        if (T.sig() != sig || Backdrop.sig(p) != bgSig) { recreate(); return }
+        p.applyOrientation(this)
+        chips(); fill(); askStorage()
+    }
+
+    override fun onPause() { super.onPause(); Backup.export(this) }
+
+    /** Na primeira vez, pede acesso à memória interna para criar a pasta EmuladorPro onde o usuário enxerga. */
+    private fun askStorage() {
+        if (Store.canUseShared(this) || p.askedStorage) return
+        p.askedStorage = true
+        AlertDialog.Builder(this, AlertDialog.THEME_DEVICE_DEFAULT_DARK).setTitle("Pasta EmuladorPro")
+            .setMessage("Para criar a pasta EmuladorPro na memória interna (saves, estados, cheats, capas e botões), o app precisa de acesso aos arquivos. Sem isso, tudo fica numa área privada do app. Você pode permitir depois em Configurações > Avançado.")
+            .setPositiveButton("Permitir") { _, _ -> Store.requestAccess(this) }
+            .setNegativeButton("Agora não", null).show()
+    }
 
     private fun chips() {
         chipHost.removeAllViews()

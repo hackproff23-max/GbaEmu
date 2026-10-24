@@ -5,6 +5,8 @@ import android.graphics.*
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
+import com.meu.gbaemu.ui.SKIN_NAMES
+import com.meu.gbaemu.ui.Store
 import com.meu.gbaemu.ui.T
 import java.io.File
 import java.io.InputStream
@@ -34,6 +36,7 @@ class ControlsView(ctx: Context) : View(ctx) {
 
     private val els = listOf("dpad", "stick", "a", "b", "l", "r", "start", "select", "menu", "cm", "ta", "tb").associateWith { El(it) }
     private val skin = HashMap<String, Bitmap>()
+    private var skinSig = ""
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 4f; color = Color.YELLOW; pathEffect = DashPathEffect(floatArrayOf(18f, 12f), 0f) }
     private val textP = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textSize = 38f; textAlign = Paint.Align.CENTER; setShadowLayer(6f, 0f, 0f, Color.BLACK) }
@@ -54,9 +57,18 @@ class ControlsView(ctx: Context) : View(ctx) {
     init { reloadSkin() }
 
     // ---------- skin ----------
-    fun reloadSkin() {
+    /** Assinatura dos arquivos da pasta Controles: só recarrega os PNGs quando algum mudou (ou com force). */
+    private fun currentSig(): String = try {
+        val d = Store.dir(context, "controls")
+        SKIN_NAMES.joinToString(",") { n -> File(d, "$n.png").let { "${it.length()}:${it.lastModified()}" } }
+    } catch (e: Exception) { "" }
+
+    fun reloadSkin(force: Boolean = true) {
+        val sig = currentSig()
+        if (!force && sig == skinSig && skin.isNotEmpty()) return
+        skinSig = sig
         skin.clear()
-        for (n in listOf("dpad", "stick_base", "stick_knob", "a", "b", "l", "r", "start", "select", "menu")) loadBmp(n)?.let { skin[n] = it }
+        for (n in SKIN_NAMES) loadBmp(n)?.let { skin[n] = it }
         invalidate()
     }
 
@@ -70,9 +82,12 @@ class ControlsView(ctx: Context) : View(ctx) {
     }
 
     private fun loadBmp(n: String): Bitmap? {
-        val custom = File(context.filesDir, "skin/$n.png")
+        // 1) EmuladorPro/Controles/<botao>.png  2) PNGs da versão antiga  3) padrão do app
+        val custom = File(Store.dir(context, "controls"), "$n.png")
+        val legacy = File(context.filesDir, "skin/$n.png")
         var bm: Bitmap? = null
         if (custom.exists()) bm = try { decode { custom.inputStream() } } catch (e: Exception) { null }
+        if (bm == null && legacy.exists()) bm = try { decode { legacy.inputStream() } } catch (e: Exception) { null }
         if (bm == null) bm = try { decode { context.assets.open("skins/default/$n.png") } } catch (e: Exception) { null }
         bm?.setHasMipMap(true)
         return bm

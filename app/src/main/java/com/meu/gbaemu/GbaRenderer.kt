@@ -1,10 +1,15 @@
 package com.meu.gbaemu
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Movie
 import android.opengl.GLES20
 import android.opengl.GLSurfaceView
 import android.opengl.GLUtils
+import android.os.SystemClock
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -25,6 +30,12 @@ class GbaRenderer(private val ctx: Context, private val emu: Emulator, private v
     @Volatile var ratio = "Original 3:2"
     @Volatile var rectPort: FloatArray? = null
     @Volatile var rectLand: FloatArray? = null
+    @Volatile var bgFile: File? = null
+    @Volatile var bgDim = 50
+    @Volatile private var bgDirty = true
+
+    /** Define (ou tira, com null) a imagem de fundo desenhada atrás da tela do jogo. PNG, JPG ou GIF animado. */
+    fun setBackground(f: File?) { bgFile = f; bgDirty = true }
 
     private class U(val loc: Int, val name: String, val type: Int)
     /** Como uma passada é dimensionada: orig = tamanho original * escala global (modo antigo); source, viewport, absolute = libretro. */
@@ -46,7 +57,18 @@ class GbaRenderer(private val ctx: Context, private val emu: Emulator, private v
     private var srcTex = 0
     private var srcW = 0
     private var srcH = 0
-    private val vbo = IntArray(2)
+    private val vbo = IntArray(3)
+    private var bgTex = 0
+    private var bgW = 0
+    private var bgH = 0
+    private var bgMovie: Movie? = null
+    private var bgBmp: Bitmap? = null
+    private var bgCanvas: Canvas? = null
+    private var bgScale = 1f
+    private var bgStart = 0L
+    private var bgLastUpd = 0L
+    private var bgQuadW = 0
+    private var bgQuadH = 0
     private val fbo = IntArray(16)
     private val fboTex = IntArray(16)
     private val fboW = IntArray(16)
@@ -60,9 +82,10 @@ class GbaRenderer(private val ctx: Context, private val emu: Emulator, private v
     override fun onSurfaceCreated(gl: GL10?, c: EGLConfig?) {
         fbo.fill(0); fboTex.fill(0); fboW.fill(0); fboH.fill(0)
         srcW = 0; srcH = 0; chain = emptyList(); luts.clear(); dirty = true
+        bgTex = 0; bgDirty = true; bgQuadW = 0 // o contexto GL foi recriado: texturas antigas não valem mais
         val t = IntArray(1)
         GLES20.glGenTextures(1, t, 0); srcTex = t[0]
-        GLES20.glGenBuffers(2, vbo, 0)
+        GLES20.glGenBuffers(3, vbo, 0)
         upload(vbo[0], floatArrayOf(-1f, 1f, 0f, 0f, -1f, -1f, 0f, 1f, 1f, 1f, 1f, 0f, 1f, -1f, 1f, 1f))   // tela
         upload(vbo[1], floatArrayOf(-1f, -1f, 0f, 0f, -1f, 1f, 0f, 1f, 1f, -1f, 1f, 0f, 1f, 1f, 1f, 1f))   // FBO (invertido)
         passthrough = try { build(PASS_VS, PASS_FS).let { Pass(it.prog, it.uniforms, PassSpec("@pass"), emptyMap()) } } catch (e: Exception) { report("Shader base: ${e.message}"); null }
@@ -76,6 +99,7 @@ class GbaRenderer(private val ctx: Context, private val emu: Emulator, private v
         GLES20.glViewport(0, 0, surfW, surfH)
         GLES20.glClearColor(0f, 0f, 0f, 1f)
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+        drawBackground()
         val sz = Native.frameSize()
         val w = sz[0]; val h = sz[1]
         if (w <= 0 || h <= 0 || chain.isEmpty()) return
@@ -137,6 +161,88 @@ class GbaRenderer(private val ctx: Context, private val emu: Emulator, private v
             if (!last) { cur = Ref(fboTex[i], outW, outH); outs[i] = cur }
         }
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+    }
+
+    // ---------- fundo (imagem / GIF) ----------
+    private fun paintMovieFrame(mv: Movie) {
+        val cv = bgCanvas ?: return
+        val dur = mv.duration().coerceAtLeast(1)
+        mv.setTime(((SystemClock.uptimeMillis() - bgStart) % dur).toInt())
+        cv.drawColor(Color.BLACK)
+        cv.save(); cv.scale(bgScale, bgScale); mv.draw(cv, 0f, 0f); cv.restore()
+        cv.drawColor(Color.argb(bgDim.coerceIn(0, 95) * 255 / 100, 0, 0, 0))
+    }
+
+    private fun loadBackground() {
+        if (bgTex != 0) { GLES20.glDeleteTextures(1, intArrayOf(bgTex), 0); bgTex = 0 }
+        bgMovie = null; bgBmp?.recycle(); bgBmp = null; bgCanvas = null; bgW = 0; bgH = 0; bgQuadW = 0
+        val f = bgFile ?: return
+        if (!f.exists()) return
+        try {
+            val head = ByteArray(3)
+            f.inputStream().use { it.read(head) }
+            val bmp: Bitmap
+            if (String(head, Charsets.ISO_8859_1) == "GIF") {
+                val mv = Movie.decodeFile(f.path)
+                if (mv == null || mv.width() <= 0 || mv.height() <= 0) throw RuntimeException("GIF inválido")
+                bgScale = minOf(1f, 512f / maxOf(mv.width(), mv.height()))
+                bmp = Bitmap.createBitmap((mv.width() * bgScale).toInt().coerceAtLeast(1), (mv.height() * bgScale).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+                bgCanvas = Canvas(bmp)
+                bgStart = SystemClock.uptimeMillis()
+                paintMovieFrame(mv)
+                if (mv.duration() > 0) bgMovie = mv
+            } else {
+                val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(f.path, o)
+                var s = 1
+                while (maxOf(o.outWidth, o.outHeight) / s > 2048) s *= 2
+                val raw = BitmapFactory.decodeFile(f.path, BitmapFactory.Options().apply { inSampleSize = s; inMutable = true; inPreferredConfig = Bitmap.Config.ARGB_8888 })
+                    ?: throw RuntimeException("imagem inválida")
+                bmp = if (raw.isMutable) raw else raw.copy(Bitmap.Config.ARGB_8888, true)
+                Canvas(bmp).drawColor(Color.argb(bgDim.coerceIn(0, 95) * 255 / 100, 0, 0, 0))
+            }
+            val t = IntArray(1)
+            GLES20.glGenTextures(1, t, 0); bgTex = t[0]
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, bgTex)
+            texParams(true, "clamp")
+            GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bmp, 0)
+            bgW = bmp.width; bgH = bmp.height
+            if (bgMovie != null) bgBmp = bmp else bmp.recycle()
+        } catch (e: Exception) {
+            report("Fundo: ${e.message}")
+            if (bgTex != 0) { GLES20.glDeleteTextures(1, intArrayOf(bgTex), 0); bgTex = 0 }
+            bgMovie = null; bgW = 0; bgH = 0
+        }
+    }
+
+    private fun drawBackground() {
+        if (bgDirty) { bgDirty = false; loadBackground() }
+        if (bgTex == 0 || bgW <= 0 || bgH <= 0) return
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, bgTex)
+        val mv = bgMovie; val bm = bgBmp
+        if (mv != null && bm != null) {
+            val now = SystemClock.uptimeMillis()
+            if (now - bgLastUpd >= 40) { // GIF: ~25 quadros por segundo no máximo
+                bgLastUpd = now
+                paintMovieFrame(mv)
+                GLUtils.texSubImage2D(GLES20.GL_TEXTURE_2D, 0, 0, 0, bm)
+            }
+        }
+        val pt = passthrough ?: return
+        if (bgQuadW != surfW || bgQuadH != surfH) {
+            bgQuadW = surfW; bgQuadH = surfH
+            // corte central ("cover"): a imagem preenche a tela inteira sem esticar
+            val sa = surfW.toFloat() / surfH; val ia = bgW.toFloat() / bgH
+            var u0 = 0f; var v0 = 0f
+            if (ia > sa) u0 = (1f - sa / ia) / 2f else v0 = (1f - ia / sa) / 2f
+            val u1 = 1f - u0; val v1 = 1f - v0
+            upload(vbo[2], floatArrayOf(-1f, 1f, u0, v0, -1f, -1f, u0, v1, 1f, 1f, u1, v0, 1f, -1f, u1, v1))
+        }
+        GLES20.glUseProgram(pt.prog)
+        texParams(true, "clamp")
+        drawQuad(vbo[2])
     }
 
     private fun outDim(type: String, s: Float, inD: Int, vpD: Int, origD: Int, sc: Int): Int = when (type) {

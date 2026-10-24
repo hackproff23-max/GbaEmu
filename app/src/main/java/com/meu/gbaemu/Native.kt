@@ -18,5 +18,7 @@ object Native {
     external fun writeSram(d: ByteArray)
     external fun saveState(): ByteArray?
     external fun loadState(d: ByteArray): Boolean
+    external fun cheatReset()
+    external fun cheatSet(index: Int, enabled: Boolean, code: String)
     external fun unload()
 }

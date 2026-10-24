@@ -13,4 +13,8 @@ Emulador de GBA com núcleo **mGBA (libretro)**, shaders GLSL importáveis, bot�
 - **Shaders**: importe `.glsl` (RetroArch/libretro, arquivo único) ou pares `.vsh` + `.fsh`. Marque vários: a ordem marcada é a ordem das passadas. Escala interna 1x–6x. Uniforms reconhecidos por nome/tipo (MVPMatrix, TextureSize, InputSize, OutputSize, FrameCount, SourceSize, u_texelDelta…). Não há suporte a presets `.glslp` nem a texturas/`PassPrev` extras.
 - **Botões PNG**: em Controles → Importar PNGs, escolha arquivos com estes nomes: `a.png b.png l.png r.png start.png select.png dpad.png stick_base.png stick_knob.png menu.png`. São usados em até 2048 px, sem recompressão. Pressionado = leve escurecimento/redução (sem PNG extra).
 - **Layout**: Controles → Editar layout. Arraste cada botão; pince com 2 dedos para mudar o tamanho. Retrato e paisagem têm layouts separados.
-- Gamepad físico e saves (.srm) automáticos em `files/saves`.
+- Gamepad físico. Tudo fica na pasta **EmuladorPro** da memória interna: `Configuracoes`, `SaveStates`, `Saves` (`.sav`), `Cheats`, `Capas` e `Controles`.
+- **Cheats**: Configurações > Avançado liga o menu de cheats no jogo (GameShark / Action Replay / CodeBreaker do GBA).
+- **Orientação de tela**: Configurações > Vídeo (Automático, Retrato, Paisagem).
+- **Botões PNG**: Configurações > Controle > botões PNG (escolher cada um, exportar para editar em outro app).
+- **Fundo**: Configurações > Avançado > Imagem de fundo (PNG, JPG ou GIF).
