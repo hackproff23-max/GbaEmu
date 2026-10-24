@@ -42,7 +42,10 @@ class GbaRenderer(private val ctx: Context, private val emu: Emulator, private v
     /** Define (ou tira, com null) a imagem de fundo desenhada atrás da tela do jogo. PNG, JPG ou GIF animado. */
     fun setBackground(f: File?) { bgFile = f; bgDirty = true }
 
-    private class U(val loc: Int, val name: String, val type: Int)
+    private class U(val loc: Int, val name: String, val type: Int) {
+        val n = name.lowercase()
+        val isOut = n.contains("output") || n.contains("outsize") || n.contains("viewport")
+    }
     /** Como uma passada é dimensionada: orig = tamanho original * escala global (modo antigo); source, viewport, absolute = libretro. */
     private class PassSpec(val file: String, val alias: String = "", val typeX: String = "orig", val typeY: String = "orig",
                            val scaleX: Float = 1f, val scaleY: Float = 1f, val linear: Boolean? = null)
@@ -99,6 +102,8 @@ class GbaRenderer(private val ctx: Context, private val emu: Emulator, private v
         val t = IntArray(1)
         GLES20.glGenTextures(1, t, 0); srcTex = t[0]
         GLES20.glGenBuffers(3, vbo, 0)
+        GLES20.glDisable(GLES20.GL_DITHER); GLES20.glDisable(GLES20.GL_BLEND); GLES20.glDisable(GLES20.GL_DEPTH_TEST)
+        GLES20.glDisable(GLES20.GL_STENCIL_TEST); GLES20.glDisable(GLES20.GL_SCISSOR_TEST); GLES20.glDisable(GLES20.GL_CULL_FACE)
         upload(vbo[0], floatArrayOf(-1f, 1f, 0f, 0f, -1f, -1f, 0f, 1f, 1f, 1f, 1f, 0f, 1f, -1f, 1f, 1f))   // tela
         upload(vbo[1], floatArrayOf(-1f, -1f, 0f, 0f, -1f, 1f, 0f, 1f, 1f, -1f, 1f, 0f, 1f, 1f, 1f, 1f))   // FBO (invertido)
         passthrough = try { build(PASS_VS, PASS_FS).let { Pass(it.prog, it.uniforms, PassSpec("@pass"), emptyMap()) } } catch (e: Exception) { report("Shader base: ${e.message}"); null }
@@ -163,7 +168,7 @@ class GbaRenderer(private val ctx: Context, private val emu: Emulator, private v
             val p = chain[i]; val spc = p.spec
             val outW: Int; val outH: Int
             if (last) {
-                if (fx) { ensureFxFbo(dw, dh); GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fxFbo); GLES20.glViewport(0, 0, dw, dh) }
+                if (fx) { ensureFxFbo(dw, dh); GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fxFbo); GLES20.glViewport(0, 0, dw, dh); GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT) }
                 else { GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0); GLES20.glViewport(dx, dy, dw, dh) }
                 outW = dw; outH = dh
             } else {
@@ -172,6 +177,7 @@ class GbaRenderer(private val ctx: Context, private val emu: Emulator, private v
                 ensureFbo(i, outW, outH)
                 GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fbo[i])
                 GLES20.glViewport(0, 0, outW, outH)
+                GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT) // conteúdo antigo não importa: poupa leitura de memória na GPU
             }
             GLES20.glUseProgram(p.prog)
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
@@ -314,8 +320,10 @@ class GbaRenderer(private val ctx: Context, private val emu: Emulator, private v
     private fun refFor(base: String, idx: Int, orig: Ref, outs: Array<Ref?>): Ref? {
         if (base.isEmpty()) return null
         if (base.equals("Orig", true) || base.equals("Original", true)) return orig
-        rePrev.matchEntire(base)?.let { m -> val j = idx - m.groupValues[1].toInt(); return if (j >= 0) outs[j] else orig }
-        rePass.matchEntire(base)?.let { m -> val j = m.groupValues[1].toInt() - 1; return if (j in 0 until idx) outs[j] else null }
+        if (base.startsWith("Pass", true)) {
+            rePrev.matchEntire(base)?.let { m -> val j = idx - m.groupValues[1].toInt(); return if (j >= 0) outs[j] else orig }
+            rePass.matchEntire(base)?.let { m -> val j = m.groupValues[1].toInt() - 1; return if (j in 0 until idx) outs[j] else null }
+        }
         luts[base]?.let { return Ref(it.tex, it.w, it.h) }
         val a = chain.indexOfFirst { it.spec.alias.isNotEmpty() && it.spec.alias == base }
         if (a in 0 until idx) return outs[a]
@@ -339,8 +347,7 @@ class GbaRenderer(private val ctx: Context, private val emu: Emulator, private v
         val lin = p.spec.linear ?: linear
         val inW = cur.w; val inH = cur.h
         for (u in p.uniforms) {
-            val nm = u.name; val n = nm.lowercase()
-            val isOut = n.contains("output") || n.contains("outsize") || n.contains("viewport")
+            val nm = u.name; val n = u.n; val isOut = u.isOut
             if (u.type == GLES20.GL_SAMPLER_2D) {
                 val lut = luts[nm]
                 val ref = if (lut != null) Ref(lut.tex, lut.w, lut.h)
@@ -497,24 +504,40 @@ class GbaRenderer(private val ctx: Context, private val emu: Emulator, private v
         val dir = shaderDir()
         val f = File(dir, s.file)
         if (!f.exists()) throw RuntimeException("arquivo ${s.file} não foi importado")
-        val b: Built; val defaults: Map<String, Float>
+        val defaults: Map<String, Float>
+        val make: (Map<String, Float>) -> Built
         if (s.file.endsWith(".glsl", true)) {
             val src = f.readText()
             defaults = pragmaParams(src)
-            b = build(prep(src, "VERTEX", false), prep(src, "FRAGMENT", true))
+            make = { pm -> build(prep(src, "VERTEX", false, pm), prep(src, "FRAGMENT", true, pm)) }
         } else {
             val vs = f.readText()
             val fsFile = File(dir, s.file.substring(0, s.file.length - 4) + ".fsh")
             if (!fsFile.exists()) throw RuntimeException("falta ${fsFile.name}")
             val fs = fsFile.readText()
             defaults = pragmaParams(vs) + pragmaParams(fs)
-            b = build(prep(vs, null, false), prep(fs, null, true))
+            make = { pm -> build(prep(vs, null, false, pm), prep(fs, null, true, pm)) }
         }
-        return Pass(b.prog, b.uniforms, s, defaults + preset)
+        val all = defaults + preset
+        // Os parâmetros não mudam durante o jogo: viram constantes no código e a GPU simplifica as contas.
+        // Se por algum motivo não compilar assim, volta ao modo antigo (uniforms).
+        val b = try { make(all) } catch (e: Exception) { make(emptyMap()) }
+        return Pass(b.prog, b.uniforms, s, all)
+    }
+
+    /** Troca "uniform float NOME;" por "const float NOME = valor;" nos parâmetros conhecidos (mesmo valor que seria enviado à GPU). */
+    private fun bakeParams(src: String, params: Map<String, Float>): String {
+        var out = src
+        for ((nm, v) in params) {
+            if (!v.isFinite()) continue
+            val re = Regex("""uniform\s+((?:lowp|mediump|highp|COMPAT_PRECISION)\s+)?float\s+${Regex.escape(nm)}\s*;""")
+            out = re.replace(out) { m -> "const " + m.groupValues[1] + "float " + nm + " = " + v.toString() + ";" }
+        }
+        return out
     }
 
     /** Injeta #define VERTEX/FRAGMENT, ajusta #version para ES e garante precisão no fragment. */
-    private fun prep(src: String, stage: String?, frag: Boolean): String {
+    private fun prep(src: String, stage: String?, frag: Boolean, pm: Map<String, Float> = emptyMap()): String {
         val lines = src.lines().toMutableList()
         val vi = lines.indexOfFirst { it.trim().startsWith("#version") }
         var header = "#version 100"
@@ -526,7 +549,7 @@ class GbaRenderer(private val ctx: Context, private val emu: Emulator, private v
         val sb = StringBuilder(header).append('\n')
         sb.append("#define PARAMETER_UNIFORM 1\n")
         if (stage != null) sb.append("#define $stage 1\n")
-        val body = lines.joinToString("\n")
+        val body = bakeParams(lines.joinToString("\n"), pm)
         if (frag && !body.contains("precision")) sb.append("#ifdef GL_ES\nprecision mediump float;\n#endif\n")
         return sb.append(body).toString()
     }
