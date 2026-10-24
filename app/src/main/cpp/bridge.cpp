@@ -2,6 +2,7 @@
 #include <dlfcn.h>
 #include <android/log.h>
 #include <atomic>
+#include <mutex>
 #include <vector>
 #include <string>
 #include <cstring>
@@ -50,6 +51,10 @@ static uint8_t g_frame[MAXW * MAXH * 4];
 static int g_w = 0, g_h = 0, g_fmt = 1;
 static double g_fps = 60.0, g_rate = 32768.0;
 static std::atomic<int> g_mask{0};
+// Todo acesso ao núcleo passa por este mutex: a thread do jogo (run/áudio) e a da interface (estado, reset, unload)
+// nunca mexem no núcleo ao mesmo tempo.
+static std::mutex g_mu;
+#define GUARD std::lock_guard<std::mutex> _lk(g_mu)
 
 template <typename T> static bool sym(T &f, const char *n) { f = (T)dlsym(g_lib, n); return f != nullptr; }
 
@@ -99,7 +104,7 @@ static void unload_core() {
 
 extern "C" {
 
-JNIEXPORT jboolean JNICALL Java_com_meu_gbaemu_Native_load(JNIEnv *e, jobject, jstring core, jbyteArray rom, jstring name, jstring sys) {
+JNIEXPORT jboolean JNICALL Java_com_meu_gbaemu_Native_load(JNIEnv *e, jobject, jstring core, jbyteArray rom, jstring name, jstring sys) { GUARD;
     unload_core();
     const char *c = e->GetStringUTFChars(core, nullptr);
     g_lib = dlopen(c, RTLD_NOW | RTLD_LOCAL);
@@ -135,53 +140,53 @@ JNIEXPORT jboolean JNICALL Java_com_meu_gbaemu_Native_load(JNIEnv *e, jobject, j
     g_loaded = true;
     return JNI_TRUE;
 }
-JNIEXPORT void JNICALL Java_com_meu_gbaemu_Native_run(JNIEnv *, jobject) { if (g_loaded) p_run(); }
-JNIEXPORT void JNICALL Java_com_meu_gbaemu_Native_reset(JNIEnv *, jobject) { if (g_loaded) p_reset(); }
+JNIEXPORT void JNICALL Java_com_meu_gbaemu_Native_run(JNIEnv *, jobject) { GUARD; if (g_loaded) p_run(); }
+JNIEXPORT void JNICALL Java_com_meu_gbaemu_Native_reset(JNIEnv *, jobject) { GUARD; if (g_loaded) p_reset(); }
 JNIEXPORT void JNICALL Java_com_meu_gbaemu_Native_setInput(JNIEnv *, jobject, jint m) { g_mask.store(m); }
 JNIEXPORT jobject JNICALL Java_com_meu_gbaemu_Native_frameBuffer(JNIEnv *e, jobject) { return e->NewDirectByteBuffer(g_frame, sizeof(g_frame)); }
 JNIEXPORT jintArray JNICALL Java_com_meu_gbaemu_Native_frameSize(JNIEnv *e, jobject) {
     jintArray a = e->NewIntArray(2); jint v[2] = {g_w, g_h}; e->SetIntArrayRegion(a, 0, 2, v); return a;
 }
-JNIEXPORT jint JNICALL Java_com_meu_gbaemu_Native_audio(JNIEnv *e, jobject, jshortArray out) {
+JNIEXPORT jint JNICALL Java_com_meu_gbaemu_Native_audio(JNIEnv *e, jobject, jshortArray out) { GUARD;
     size_t n = std::min((size_t)e->GetArrayLength(out), g_audio.size()); n &= ~(size_t)1;
     if (n) { e->SetShortArrayRegion(out, 0, (jsize)n, g_audio.data()); g_audio.erase(g_audio.begin(), g_audio.begin() + n); }
     return (jint)n;
 }
-JNIEXPORT void JNICALL Java_com_meu_gbaemu_Native_clearAudio(JNIEnv *, jobject) { g_audio.clear(); }
+JNIEXPORT void JNICALL Java_com_meu_gbaemu_Native_clearAudio(JNIEnv *, jobject) { GUARD; g_audio.clear(); }
 JNIEXPORT jdouble JNICALL Java_com_meu_gbaemu_Native_sampleRate(JNIEnv *, jobject) { return g_rate; }
 JNIEXPORT jdouble JNICALL Java_com_meu_gbaemu_Native_fps(JNIEnv *, jobject) { return g_fps; }
-JNIEXPORT jbyteArray JNICALL Java_com_meu_gbaemu_Native_readSram(JNIEnv *e, jobject) {
+JNIEXPORT jbyteArray JNICALL Java_com_meu_gbaemu_Native_readSram(JNIEnv *e, jobject) { GUARD;
     if (!g_loaded) return nullptr;
     size_t sz = p_mem_size(0); void *d = p_mem_data(0);
     if (!sz || !d) return nullptr;
     jbyteArray a = e->NewByteArray((jsize)sz); e->SetByteArrayRegion(a, 0, (jsize)sz, (jbyte *)d); return a;
 }
-JNIEXPORT void JNICALL Java_com_meu_gbaemu_Native_writeSram(JNIEnv *e, jobject, jbyteArray a) {
+JNIEXPORT void JNICALL Java_com_meu_gbaemu_Native_writeSram(JNIEnv *e, jobject, jbyteArray a) { GUARD;
     if (!g_loaded) return;
     size_t sz = p_mem_size(0); void *d = p_mem_data(0);
     if (!sz || !d) return;
     size_t n = std::min(sz, (size_t)e->GetArrayLength(a));
     e->GetByteArrayRegion(a, 0, (jsize)n, (jbyte *)d);
 }
-JNIEXPORT jbyteArray JNICALL Java_com_meu_gbaemu_Native_saveState(JNIEnv *e, jobject) {
+JNIEXPORT jbyteArray JNICALL Java_com_meu_gbaemu_Native_saveState(JNIEnv *e, jobject) { GUARD;
     if (!g_loaded) return nullptr;
     size_t sz = p_ser_size(); if (!sz) return nullptr;
     std::vector<uint8_t> buf(sz);
     if (!p_ser(buf.data(), sz)) return nullptr;
     jbyteArray a = e->NewByteArray((jsize)sz); e->SetByteArrayRegion(a, 0, (jsize)sz, (jbyte *)buf.data()); return a;
 }
-JNIEXPORT jboolean JNICALL Java_com_meu_gbaemu_Native_loadState(JNIEnv *e, jobject, jbyteArray a) {
+JNIEXPORT jboolean JNICALL Java_com_meu_gbaemu_Native_loadState(JNIEnv *e, jobject, jbyteArray a) { GUARD;
     if (!g_loaded) return JNI_FALSE;
-    jsize n = e->GetArrayLength(a); std::vector<uint8_t> buf(n);
+    jsize n = e->GetArrayLength(a); if (n < 1024) return JNI_FALSE; std::vector<uint8_t> buf(n);
     e->GetByteArrayRegion(a, 0, n, (jbyte *)buf.data());
     return p_unser(buf.data(), buf.size()) ? JNI_TRUE : JNI_FALSE;
 }
-JNIEXPORT void JNICALL Java_com_meu_gbaemu_Native_cheatReset(JNIEnv *, jobject) { if (g_loaded && p_cheat_reset) p_cheat_reset(); }
-JNIEXPORT void JNICALL Java_com_meu_gbaemu_Native_cheatSet(JNIEnv *e, jobject, jint idx, jboolean on, jstring code) {
+JNIEXPORT void JNICALL Java_com_meu_gbaemu_Native_cheatReset(JNIEnv *, jobject) { GUARD; if (g_loaded && p_cheat_reset) p_cheat_reset(); }
+JNIEXPORT void JNICALL Java_com_meu_gbaemu_Native_cheatSet(JNIEnv *e, jobject, jint idx, jboolean on, jstring code) { GUARD;
     if (!g_loaded || !p_cheat_set || !code) return;
     const char *c = e->GetStringUTFChars(code, nullptr);
     if (c) { p_cheat_set((unsigned)idx, on == JNI_TRUE, c); e->ReleaseStringUTFChars(code, c); }
 }
-JNIEXPORT void JNICALL Java_com_meu_gbaemu_Native_unload(JNIEnv *, jobject) { unload_core(); }
+JNIEXPORT void JNICALL Java_com_meu_gbaemu_Native_unload(JNIEnv *, jobject) { GUARD; unload_core(); }
 
 }

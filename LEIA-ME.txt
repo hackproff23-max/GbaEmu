@@ -1,3 +1,15 @@
+PATCH 8 - correções de estabilidade, menu 3x3 e auto-saves
+============================================================
+- MENU 3x3 (lido de cima para baixo): Carregar estado, Salvar estado, Configurações | Shaders, Acelerar, Controles |
+  Reiniciar jogo, Voltar à biblioteca, Cores e efeitos (ou Cheats, se ligados nas configurações; nesse caso
+  "Cores e efeitos" fica dentro de Shaders). "Abrir ROM" saiu do menu (use a biblioteca).
+- 5 AUTO-SAVES TEMPORÁRIOS: um a cada 3 min de jogo rodando (pausa não conta), em rodízio: o 6º sobrescreve o mais antigo.
+  Ficam em Carregar estado > "Auto 1..5" (do mais novo ao mais antigo).
+- ESTABILIDADE: estados gravados de forma atômica + selo CRC (estado pela metade/corrompido é descartado em vez de
+  derrubar o núcleo); retomada carregada antes de o jogo começar a rodar; acesso ao núcleo serializado por mutex nativo;
+  parada do jogo não trava mais a tela nem descarrega o núcleo com a thread viva; áudio se recupera sozinho; erro na thread
+  do jogo vira aviso em vez de fechar o app.
+
 PATCH 7 - GBA Emu
 =================
 Termux, na pasta do projeto (troque o caminho do zip se ele estiver em outro lugar):

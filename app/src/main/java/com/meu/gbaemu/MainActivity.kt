@@ -101,6 +101,7 @@ class MainActivity : Activity() {
         }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         emu = Emulator(this) { glView.requestRender() }
+        emu.onFatal = { m -> toast("O jogo parou por um erro ($m). Use Carregar estado ou volte à biblioteca.") }
         emu.ffMul = ui.ffMultiplierFor(gid); emu.ffAudio = ui.ffAudio; emu.autoEveryMs = ui.autoSaveMs
         emu.volume = if (ui.mute) 0f else ui.volumeFor(gid) / 100f
         renderer = GbaRenderer(this, emu) { msg -> toast(msg) }
@@ -239,17 +240,21 @@ class MainActivity : Activity() {
             }
         }
         romInfo = Ident.infoOf(bytes, name)
-        val err = emu.start(bytes, name)
-        if (err != null) toast(err)
-        else {
+        var resumedMsg: String? = null
+        val err = emu.start(bytes, name) {
+            // roda com o núcleo carregado e a thread do jogo ainda parada
             gameName = name
             cheats = Cheats.load(this, name); emu.applyCheats(cheats)
             if (!editOnly) {
                 // o sistema fechou o app enquanto você estava fora: volta exatamente de onde parou
-                if (restored && emu.loadResume()) { emu.applyCheats(cheats); toast("Voltando de onde você parou") }
-                else if (uiP.autoResume && !(intent.getBooleanExtra("fresh", false) && !restored) && emu.loadState(0)) { emu.applyCheats(cheats); toast("Continuando de onde você parou") }
-                if (uiP.onlineAuto && cheats.isEmpty() && !restored) fetchCheats(true)
+                if (restored && emu.loadResume()) { emu.applyCheats(cheats); resumedMsg = "Voltando de onde você parou" }
+                else if (uiP.autoResume && !(intent.getBooleanExtra("fresh", false) && !restored) && emu.loadState(0)) { emu.applyCheats(cheats); resumedMsg = "Continuando de onde você parou" }
             }
+        }
+        if (err != null) toast(err)
+        else {
+            resumedMsg?.let { toast(it) }
+            if (!editOnly && uiP.onlineAuto && cheats.isEmpty() && !restored) fetchCheats(true)
             restored = false // vale só para a primeira ROM aberta depois que o sistema recriou a tela
         }
     }
@@ -404,6 +409,7 @@ class MainActivity : Activity() {
             Row("filter", "Filtro", sub = if (renderer.linear) "bilinear" else "nearest") {
                 renderer.linear = !renderer.linear; prefs.edit().putBoolean("linear", renderer.linear).apply(); glView.requestRender()
             },
+            Row("drop", "Cores e efeitos", sub = fxSummary()) { fxDialog() },
             Row("power", "Desativar todos") { applyShaders(emptyList()) }))
     }
 
@@ -499,35 +505,45 @@ class MainActivity : Activity() {
         openMenu = if (save) "state:save" else "state:load"
         val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         lateinit var dlg: AlertDialog
-        val slots = if (save) (1..5).toList() else (0..5).toList() // slot 0 = auto-save (só carregar)
         val cols = Dlg.cols(this); val m = T.dp(this, 4)
-        slots.chunked(cols).forEach { chunk ->
-            val line = LinearLayout(this).apply { isBaselineAligned = false }
-            chunk.forEach { s ->
-                val sf = emu.stateFile(s); val tf = emu.thumbFile(s); val has = sf.exists()
-                val pic = RatioFrame(this, 1.5f).apply {
-                    setBackgroundColor(T.BG)
-                    val bmp = if (has && tf.exists()) BitmapFactory.decodeFile(tf.path) else null
-                    if (bmp != null) addView(ImageView(context).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setImageBitmap(bmp) }, FrameLayout.LayoutParams(-1, -1))
-                    else addView(T.text(context, if (has) "sem foto" else "vazio", 13f, T.MUT).apply { gravity = Gravity.CENTER }, FrameLayout.LayoutParams(-1, -1))
-                }
-                val tile = LinearLayout(this).apply {
-                    orientation = LinearLayout.VERTICAL; background = T.box(context, T.CARD, T.LINE, 12)
-                    clipToOutline = true; outlineProvider = ViewOutlineProvider.BACKGROUND
-                    addView(pic, LinearLayout.LayoutParams(-1, -2))
-                    addView(T.text(context, if (s == 0) "Auto-save" else "Slot $s", 14f, T.TX, true).apply { setPadding(T.dp(context, 10), T.dp(context, 8), T.dp(context, 10), 0) })
-                    addView(T.text(context, if (has) DateFormat.format("dd/MM  HH:mm", sf.lastModified()).toString() else "vazio", 12f, T.MUT).apply { setPadding(T.dp(context, 10), 0, T.dp(context, 10), T.dp(context, 8)) })
-                    setOnClickListener {
-                        dlg.dismiss()
-                        val ok = if (save) emu.saveState(s) else emu.loadState(s)
-                        if (!save && ok) emu.applyCheats(cheats) // garante os cheats ligados depois de carregar o estado
-                        toast(if (ok) (if (save) "Estado salvo no slot $s" else "Estado carregado") else (if (save) "Não foi possível salvar" else "Slot vazio"))
+        fun tiles(slots: List<Int>, label: (Int) -> String) {
+            slots.chunked(cols).forEach { chunk ->
+                val line = LinearLayout(this).apply { isBaselineAligned = false }
+                chunk.forEach { s ->
+                    val sf = emu.stateFile(s); val tf = emu.thumbFile(s); val has = sf.exists()
+                    val pic = RatioFrame(this, 1.5f).apply {
+                        setBackgroundColor(T.BG)
+                        val bmp = if (has && tf.exists()) BitmapFactory.decodeFile(tf.path) else null
+                        if (bmp != null) addView(ImageView(context).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setImageBitmap(bmp) }, FrameLayout.LayoutParams(-1, -1))
+                        else addView(T.text(context, if (has) "sem foto" else "vazio", 13f, T.MUT).apply { gravity = Gravity.CENTER }, FrameLayout.LayoutParams(-1, -1))
                     }
+                    val tile = LinearLayout(this).apply {
+                        orientation = LinearLayout.VERTICAL; background = T.box(context, T.CARD, T.LINE, 12)
+                        clipToOutline = true; outlineProvider = ViewOutlineProvider.BACKGROUND
+                        addView(pic, LinearLayout.LayoutParams(-1, -2))
+                        addView(T.text(context, label(s), 14f, T.TX, true).apply { setPadding(T.dp(context, 10), T.dp(context, 8), T.dp(context, 10), 0) })
+                        addView(T.text(context, if (has) DateFormat.format("dd/MM  HH:mm", sf.lastModified()).toString() else "vazio", 12f, T.MUT).apply { setPadding(T.dp(context, 10), 0, T.dp(context, 10), T.dp(context, 8)) })
+                        setOnClickListener {
+                            dlg.dismiss()
+                            val ok = if (save) emu.saveState(s) else emu.loadState(s)
+                            if (!save && ok) emu.applyCheats(cheats) // garante os cheats ligados depois de carregar o estado
+                            toast(if (ok) (if (save) "Estado salvo" else "Estado carregado") else (if (save) "Não foi possível salvar" else "Slot vazio ou arquivo inválido"))
+                        }
+                    }
+                    line.addView(tile, LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(m, m, m, m) })
                 }
-                line.addView(tile, LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(m, m, m, m) })
+                repeat(cols - chunk.size) { line.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f).apply { setMargins(m, m, m, m) }) }
+                body.addView(line, LinearLayout.LayoutParams(-1, -2))
             }
-            repeat(cols - chunk.size) { line.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f).apply { setMargins(m, m, m, m) }) }
-            body.addView(line, LinearLayout.LayoutParams(-1, -2))
+        }
+        // slot 0 = auto-save ao sair/periódico (só carregar)
+        tiles(if (save) (1..5).toList() else (0..5).toList()) { if (it == 0) "Auto-save" else "Slot $it" }
+        if (!save) {
+            // 5 auto-saves temporários (um a cada 3 min de jogo): do mais novo para o mais antigo
+            val ring = (Emulator.AUTO_FIRST until Emulator.AUTO_FIRST + Emulator.AUTO_COUNT)
+                .sortedByDescending { emu.stateFile(it).let { f -> if (f.exists()) f.lastModified() else -1L } }
+            body.addView(T.note(this, "Auto-saves temporários · um a cada 3 min de jogo, do mais novo ao mais antigo"))
+            tiles(ring) { "Auto ${it - Emulator.AUTO_FIRST + 1}" }
         }
         val head = (if (save) "Salvar estado" else "Carregar estado") + "\n" + gameTitle()
         dlg = showDlgGet(AlertDialog.Builder(this, THEME).setView(Dlg.frame(this, head, body, coverBmp(), true, true)))
@@ -536,19 +552,21 @@ class MainActivity : Activity() {
 
     private fun showMenu() {
         openMenu = "menu"
-        menuDlg(gameTitle(), listOf(
+        // 3 colunas x 3 linhas, lidas de cima para baixo: coluna 1, depois coluna 2, depois coluna 3
+        val byColumn = listOf(
             Row("load", "Carregar estado") { stateDialog(false) },
             Row("save", "Salvar estado") { stateDialog(true) },
             Row("gear", "Configurações") { startActivity(Intent(this, SettingsActivity::class.java)) },
             Row("layers", "Shaders") { shaderMenu() },
-            Row("drop", "Cores e efeitos", sub = fxSummary()) { fxDialog() },
-            Row("pad", "Controles") { controlsMenu() },
-            Row("folder", "Abrir ROM") { pick(1, false) },
             Row("ff", "Acelerar", sub = "${emu.ffMul}x · " + (if (emu.fast) "ligado" else "desligado"), checked = emu.fast) { emu.fast = !emu.fast },
-            Row("home", "Voltar à biblioteca") { finish() },
+            Row("pad", "Controles") { controlsMenu() },
             Row("restart", "Reiniciar jogo") { emu.reset(); emu.applyCheats(cheats) },
-            *(if (uiP.cheatsOn) arrayOf(Row("cheat", "Cheats", sub = "${cheats.count { it.on }} ligado(s)") { cheatsDialog() }) else emptyArray<Row>())),
-            Dlg.cols(this), true)
+            Row("home", "Voltar à biblioteca") { finish() },
+            if (uiP.cheatsOn) Row("cheat", "Cheats", sub = "${cheats.count { it.on }} ligado(s)") { cheatsDialog() }
+            else Row("drop", "Cores e efeitos", sub = fxSummary()) { fxDialog() })
+        // a grade preenche linha por linha; reordena para que a leitura vertical saia como acima
+        val rowMajor = (0 until 9).map { i -> byColumn[(i % 3) * 3 + i / 3] }
+        menuDlg(gameTitle(), rowMajor, 3, true)
     }
 
     // ---------- cheats ----------
@@ -707,11 +725,11 @@ class MainActivity : Activity() {
     // ---------- ciclo de vida ----------
     override fun onWindowFocusChanged(f: Boolean) { super.onWindowFocusChanged(f); if (f) immersive() }
     override fun onPause() { super.onPause(); emu.paused = true; emu.saveSram()
-        if (::uiP.isInitialized && (uiP.autoSaveMs > 0 || uiP.autoResume)) emu.saveState(0)
+        if (::uiP.isInitialized && emu.loaded && (uiP.autoSaveMs > 0 || uiP.autoResume)) emu.saveState(0)
         Backup.export(this)
         glView.onPause() }
     override fun onResume() { super.onResume(); applyPrefsLive(); glView.onResume(); if (openDialogs == 0) emu.paused = false; immersive() }
     /** Ao sair do app (mesmo por um instante) guarda o ponto exato do jogo: se o sistema fechar o app, ele volta daqui. */
     override fun onStop() { super.onStop(); if (!isFinishing && !editOnly && ::emu.isInitialized && emu.loaded) emu.saveResume() }
-    override fun onDestroy() { super.onDestroy(); if (isFinishing && ::emu.isInitialized) emu.clearResume(); emu.stop() }
+    override fun onDestroy() { super.onDestroy(); if (::emu.isInitialized) { if (isFinishing) emu.clearResume(); emu.onFatal = null; emu.stop() } }
 }
