@@ -11,24 +11,26 @@ import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.TextView
 
-/** Tela de abertura: fundo em gradiente (res/drawable-nodpi/loading_bg.png) e "Carregando..." sendo digitado. */
+/** Tela de abertura: fundo em gradiente, logo que aparece suave (fade), "Carregando..." digitando e, ao terminar, tudo some. */
 class LoadingActivity : Activity() {
     private val h = Handler(Looper.getMainLooper())
     private val full = "Carregando..."
     private var n = 0
     private lateinit var tv: TextView
+    private lateinit var box: View
 
     private val typer = object : Runnable {
         override fun run() {
             if (n <= full.length) {
                 tv.text = full.substring(0, n) + "_"
                 n++
-                h.postDelayed(this, 110)
+                h.postDelayed(this, 90)
             } else {
                 tv.text = full
-                h.postDelayed({ openLibrary() }, 650)
+                h.postDelayed({ fadeOutAndOpen() }, 450)
             }
         }
     }
@@ -47,20 +49,51 @@ class LoadingActivity : Activity() {
             setImageResource(com.meu.gbaemu.R.drawable.loading_bg)
             scaleType = ImageView.ScaleType.CENTER_CROP
         }, FrameLayout.LayoutParams(-1, -1))
+
+        val dm = resources.displayMetrics
+        val logoW = minOf((minOf(dm.widthPixels, dm.heightPixels) * 0.62f).toInt(), T.dp(this, 320))
+        val logoH = (logoW * 294f / 512f).toInt()
+        val logo = ImageView(this).apply {
+            setImageResource(com.meu.gbaemu.R.drawable.logo_gba)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+        }
         tv = TextView(this).apply {
             textSize = 20f
             setTextColor(T.GOLD2)
             typeface = T.font ?: Typeface.MONOSPACE
             letterSpacing = 0.06f
+            gravity = Gravity.CENTER
         }
-        root.addView(tv, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
-            bottomMargin = (resources.displayMetrics.heightPixels * 0.18f).toInt()
-        })
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            addView(logo, LinearLayout.LayoutParams(logoW, logoH))
+            addView(tv, LinearLayout.LayoutParams(-2, -2).apply { topMargin = T.dp(this@LoadingActivity, 28) })
+        }
+        box = col
+        root.addView(col, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
         setContentView(root)
     }
 
-    override fun onStart() { super.onStart(); n = 0; h.post(typer) }
-    override fun onStop() { super.onStop(); h.removeCallbacksAndMessages(null) }
+    override fun onStart() {
+        super.onStart()
+        n = 0
+        box.animate().cancel()
+        box.alpha = 0f
+        box.animate().alpha(1f).setDuration(700).start()   // aparece suave enquanto carrega
+        h.post(typer)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        h.removeCallbacksAndMessages(null)
+        box.animate().cancel()
+    }
+
+    private fun fadeOutAndOpen() {
+        if (isFinishing) return
+        box.animate().alpha(0f).setDuration(450).withEndAction { openLibrary() }.start()   // carregou: some
+    }
 
     private fun openLibrary() {
         if (isFinishing) return

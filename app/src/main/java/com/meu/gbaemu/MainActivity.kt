@@ -247,7 +247,7 @@ class MainActivity : Activity() {
             if (!editOnly) {
                 // o sistema fechou o app enquanto você estava fora: volta exatamente de onde parou
                 if (restored && emu.loadResume()) { emu.applyCheats(cheats); toast("Voltando de onde você parou") }
-                else if (uiP.autoResume && emu.loadState(0)) { emu.applyCheats(cheats); toast("Continuando de onde você parou") }
+                else if (uiP.autoResume && !(intent.getBooleanExtra("fresh", false) && !restored) && emu.loadState(0)) { emu.applyCheats(cheats); toast("Continuando de onde você parou") }
                 if (uiP.onlineAuto && cheats.isEmpty() && !restored) fetchCheats(true)
             }
             restored = false // vale só para a primeira ROM aberta depois que o sistema recriou a tela
@@ -537,17 +537,18 @@ class MainActivity : Activity() {
     private fun showMenu() {
         openMenu = "menu"
         menuDlg(gameTitle(), listOf(
-            Row("folder", "Abrir ROM") { pick(1, false) },
-            Row("layers", "Shaders") { shaderMenu() },
+            Row("load", "Carregar estado") { stateDialog(false) },
+            Row("save", "Salvar estado") { stateDialog(true) },
             Row("gear", "Configurações") { startActivity(Intent(this, SettingsActivity::class.java)) },
+            Row("layers", "Shaders") { shaderMenu() },
             Row("drop", "Cores e efeitos", sub = fxSummary()) { fxDialog() },
             Row("pad", "Controles") { controlsMenu() },
-            Row("save", "Salvar estado") { stateDialog(true) },
-            Row("load", "Carregar estado") { stateDialog(false) },
-            *(if (uiP.cheatsOn) arrayOf(Row("cheat", "Cheats", sub = "${cheats.count { it.on }} ligado(s)") { cheatsDialog() }) else emptyArray<Row>()),
+            Row("folder", "Abrir ROM") { pick(1, false) },
             Row("ff", "Acelerar", sub = "${emu.ffMul}x · " + (if (emu.fast) "ligado" else "desligado"), checked = emu.fast) { emu.fast = !emu.fast },
+            Row("home", "Voltar à biblioteca") { finish() },
             Row("restart", "Reiniciar jogo") { emu.reset(); emu.applyCheats(cheats) },
-            Row("home", "Voltar à biblioteca") { finish() }), Dlg.cols(this), true)
+            *(if (uiP.cheatsOn) arrayOf(Row("cheat", "Cheats", sub = "${cheats.count { it.on }} ligado(s)") { cheatsDialog() }) else emptyArray<Row>())),
+            Dlg.cols(this), true)
     }
 
     // ---------- cheats ----------

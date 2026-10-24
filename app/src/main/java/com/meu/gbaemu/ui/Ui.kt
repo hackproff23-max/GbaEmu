@@ -80,11 +80,11 @@ object T {
 
     fun header(c: Context, title: TextView, right: View?): View = LinearLayout(c).apply {
         gravity = Gravity.CENTER_VERTICAL; setPadding(dp(c, 16), dp(c, 12), dp(c, 16), dp(c, 12))
-        val logo = text(c, "GBA", 13f, BG, true).apply {
-            gravity = Gravity.CENTER
-            background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(GOLD2, GOLD, shade(GOLD, 0.65f))).apply { cornerRadius = dp(c, 10).toFloat() }
+        val logo = ImageView(c).apply {
+            setImageResource(com.meu.gbaemu.R.drawable.logo_gba)
+            scaleType = ImageView.ScaleType.FIT_CENTER
         }
-        addView(logo, LinearLayout.LayoutParams(dp(c, 38), dp(c, 38)))
+        addView(logo, LinearLayout.LayoutParams(dp(c, 62), dp(c, 36)))
         addView(title, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(c, 10) })
         right?.let { addView(it, LinearLayout.LayoutParams(dp(c, 42), dp(c, 42))) }
     }

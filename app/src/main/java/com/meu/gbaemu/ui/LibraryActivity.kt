@@ -167,6 +167,8 @@ class LibraryActivity : Activity() {
             gravity = Gravity.CENTER; background = T.box(context, T.GOLD, T.GOLD); setPadding(0, T.dp(context, 13), 0, T.dp(context, 13))
             setOnClickListener { dlg.dismiss(); play(g) }
         }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = T.dp(this@LibraryActivity, 12) })
+        col.addView(Dlg.button(this, "↻  Reiniciar jogo", false) { dlg.dismiss(); play(g, true) },
+            LinearLayout.LayoutParams(-1, -2).apply { topMargin = T.dp(this@LibraryActivity, 8) })
 
         section("Capa", listOfNotNull(
             Row("image", if (hasCover) "Trocar capa" else "Escolher capa", "da galeria") { pickCover(g) },
@@ -244,9 +246,9 @@ class LibraryActivity : Activity() {
         dlg.show(); dlg.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
     }
 
-    private fun play(g: Game) {
+    private fun play(g: Game, fresh: Boolean = false) {
         p.touch(g.id)
-        startActivity(Intent(this, MainActivity::class.java).putExtra("rom_uri", g.uri).putExtra("game_id", g.id))
+        startActivity(Intent(this, MainActivity::class.java).putExtra("rom_uri", g.uri).putExtra("game_id", g.id).putExtra("fresh", fresh))
     }
 
     private fun pickRoms() {
