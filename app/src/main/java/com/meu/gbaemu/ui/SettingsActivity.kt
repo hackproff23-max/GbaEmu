@@ -75,11 +75,16 @@ class SettingsActivity : Activity() {
 
     private fun video(col: LinearLayout) {
         val names = mapOf("auto" to "Automático", "retrato" to "Retrato", "paisagem" to "Paisagem")
-        col.addView(T.h(this, "Orientação de tela"))
-        col.addView(T.chips(this, names.values.toList(), names[p.orient] ?: names.getValue("auto")) { n ->
-            p.orient = names.entries.first { it.value == n }.key; p.applyOrientation(this); show("video")
+        col.addView(T.h(this, "Orientação do app"))
+        col.addView(T.chips(this, names.values.toList(), names[p.orientApp] ?: names.getValue("auto")) { n ->
+            p.orientApp = names.entries.first { it.value == n }.key; p.applyOrientation(this); show("video")
         })
-        col.addView(T.note(this, "Automático segue o giro automático do celular: com o giro travado, a tela não vira sozinha. Retrato e Paisagem ficam fixos em todo o app. Cada jogo pode ter a sua na Biblioteca."))
+        col.addView(T.note(this, "Vale para a biblioteca e as configurações. Automático segue o giro automático do celular: com o giro travado, a tela não vira sozinha."))
+        col.addView(T.h(this, "Orientação do jogo"))
+        col.addView(T.chips(this, names.values.toList(), names[p.orient] ?: names.getValue("auto")) { n ->
+            p.orient = names.entries.first { it.value == n }.key; show("video")
+        })
+        col.addView(T.note(this, "Vale só dentro do jogo, separada da orientação do app. Cada jogo pode ter a sua própria na Biblioteca (Configuração só deste jogo)."))
         col.addView(T.h(this, "Proporção da tela"))
         val ratios = listOf("Original 3:2", "4:3", "16:9", "Tela cheia")
         col.addView(T.chips(this, ratios, p.ratio) { p.ratio = it; show("video") })

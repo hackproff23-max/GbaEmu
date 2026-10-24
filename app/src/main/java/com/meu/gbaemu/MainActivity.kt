@@ -89,6 +89,7 @@ class MainActivity : Activity() {
         renderer.linear = prefs.getBoolean("linear", false)
         renderer.ratio = ui.ratioFor(gid); renderer.rectPort = ui.screenRect(false); renderer.rectLand = ui.screenRect(true)
         renderer.shaderKeys = shaderKeysFor(gid)
+        renderer.fxBright = ui.fxBright; renderer.fxContrast = ui.fxContrast; renderer.fxSat = ui.fxSat; renderer.fxLcd = ui.fxLcd
         glView = GLSurfaceView(this).apply {
             setEGLContextClientVersion(2)
             setRenderer(renderer)
@@ -192,7 +193,7 @@ class MainActivity : Activity() {
         else {
             gameName = name
             cheats = Cheats.load(this, name); emu.applyCheats(cheats)
-            if (uiP.autoResume && !editOnly && emu.loadState(0)) toast("Continuando de onde você parou")
+            if (uiP.autoResume && !editOnly && emu.loadState(0)) { emu.applyCheats(cheats); toast("Continuando de onde você parou") }
         }
     }
 
@@ -209,6 +210,7 @@ class MainActivity : Activity() {
         emu.volume = if (ui.mute) 0f else ui.volumeFor(gid) / 100f
         renderer.scale = prefs.getInt("scale", 3); renderer.linear = prefs.getBoolean("linear", false)
         renderer.ratio = ui.ratioFor(gid); renderer.rectPort = ui.screenRect(false); renderer.rectLand = ui.screenRect(true)
+        renderer.fxBright = ui.fxBright; renderer.fxContrast = ui.fxContrast; renderer.fxSat = ui.fxSat; renderer.fxLcd = ui.fxLcd
         val keys = shaderKeysFor(gid)
         if (keys != renderer.shaderKeys) renderer.shaderKeys = keys
         renderer.dirty = true
@@ -348,6 +350,51 @@ class MainActivity : Activity() {
             Row("power", "Desativar todos") { applyShaders(emptyList()) }))
     }
 
+    // ---------- cores e efeitos ----------
+    private fun fxSummary(): String {
+        val ui = uiP
+        return if (ui.fxBright == 0 && ui.fxContrast == 0 && ui.fxSat == 0 && ui.fxLcd == 0) "desligado" else "ligado"
+    }
+
+    private fun fxSlider(label: String, lo: Int, hi: Int, start: Int, onChange: (Int) -> Unit, onDone: (Int) -> Unit): View {
+        val lb = T.text(this, "", 14f, T.MUT)
+        val sb = SeekBar(this).apply {
+            max = hi - lo; progress = (start - lo).coerceIn(0, hi - lo)
+            progressTintList = ColorStateList.valueOf(T.GOLD); thumbTintList = ColorStateList.valueOf(T.GOLD)
+        }
+        fun upd() { val v = sb.progress + lo; lb.text = "$label: ${if (v > 0 && lo < 0) "+" else ""}$v" }
+        upd()
+        sb.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(s: SeekBar?, v: Int, u: Boolean) { upd(); onChange(v + lo) }
+            override fun onStartTrackingTouch(s: SeekBar?) {}
+            override fun onStopTrackingTouch(s: SeekBar?) { onDone(sb.progress + lo) }
+        })
+        return LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, T.dp(context, 6), 0, T.dp(context, 6)); addView(lb); addView(sb) }
+    }
+
+    private fun fxDialog() {
+        val ui = uiP
+        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        body.addView(fxSlider("Brilho", -100, 100, ui.fxBright, { renderer.fxBright = it; glView.requestRender() }, { ui.fxBright = it }))
+        body.addView(fxSlider("Contraste", -100, 100, ui.fxContrast, { renderer.fxContrast = it; glView.requestRender() }, { ui.fxContrast = it }))
+        body.addView(fxSlider("Saturação", -100, 100, ui.fxSat, { renderer.fxSat = it; glView.requestRender() }, { ui.fxSat = it }))
+        body.addView(fxSlider("Efeito LCD (opacidade da grade)", 0, 100, ui.fxLcd, { renderer.fxLcd = it; glView.requestRender() }, { ui.fxLcd = it }))
+        body.addView(T.note(this, "Tudo em 0 = imagem original, sem gastar desempenho. O efeito LCD escurece a grade entre os pixels do jogo: comece baixo e aumente aos poucos. Vale para todos os jogos e para qualquer shader."))
+        lateinit var dlg: AlertDialog
+        val row = LinearLayout(this).apply {
+            addView(Dlg.button(this@MainActivity, "Zerar tudo", false) {
+                ui.fxBright = 0; ui.fxContrast = 0; ui.fxSat = 0; ui.fxLcd = 0
+                renderer.fxBright = 0; renderer.fxContrast = 0; renderer.fxSat = 0; renderer.fxLcd = 0
+                glView.requestRender(); dlg.dismiss(); fxDialog()
+            }, LinearLayout.LayoutParams(0, -2, 1f).apply { rightMargin = T.dp(this@MainActivity, 8) })
+            addView(Dlg.button(this@MainActivity, "Fechar", true) { dlg.dismiss() }, LinearLayout.LayoutParams(0, -2, 1f))
+        }
+        Dlg.add(this, body, row)
+        dlg = showDlgGet(AlertDialog.Builder(this, THEME).setView(Dlg.frame(this, "Cores e efeitos", body)))
+        themed(dlg)
+        dlg.window?.setDimAmount(0f); dlg.window?.setGravity(Gravity.BOTTOM) // deixa ver o jogo enquanto ajusta
+    }
+
     // ---------- controles ----------
 
     private fun opacityDialog() {
@@ -412,6 +459,7 @@ class MainActivity : Activity() {
                 setOnClickListener {
                     dlg.dismiss()
                     val ok = if (save) emu.saveState(s) else emu.loadState(s)
+                    if (!save && ok) emu.applyCheats(cheats) // garante os cheats ligados depois de carregar o estado
                     toast(if (ok) (if (save) "Estado salvo no slot $s" else "Estado carregado") else (if (save) "Não foi possível salvar" else "Slot vazio"))
                 }
             })
@@ -424,12 +472,13 @@ class MainActivity : Activity() {
         menuDlg("Menu", listOf(
             Row("folder", "Abrir ROM") { pick(1, false) },
             Row("layers", "Shaders") { shaderMenu() },
+            Row("drop", "Cores e efeitos", sub = fxSummary()) { fxDialog() },
             Row("pad", "Controles") { controlsMenu() },
             Row("save", "Salvar estado") { stateDialog(true) },
             Row("load", "Carregar estado") { stateDialog(false) },
             *(if (uiP.cheatsOn) arrayOf(Row("cheat", "Cheats", sub = "${cheats.count { it.on }} ligado(s)") { cheatsDialog() }) else emptyArray<Row>()),
             Row("ff", "Acelerar (${emu.ffMul}x)", sub = if (emu.fast) "ligado" else "desligado", checked = emu.fast) { emu.fast = !emu.fast },
-            Row("restart", "Reiniciar jogo") { emu.reset() },
+            Row("restart", "Reiniciar jogo") { emu.reset(); emu.applyCheats(cheats) },
             Row("gear", "Configurações") { startActivity(Intent(this, SettingsActivity::class.java)) },
             Row("home", "Voltar à biblioteca") { finish() }))
     }
@@ -478,7 +527,7 @@ class MainActivity : Activity() {
         lateinit var dlg: AlertDialog
         val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         Dlg.add(this, body, nome); Dlg.add(this, body, cod)
-        body.addView(T.note(this, "Uma linha por código, no formato 82025840 0001 ou 12345678 9ABCDEF0. Ex.: vidas infinitas."))
+        body.addView(T.note(this, "Uma linha por código, no formato 82025840 0001 ou 12345678 9ABCDEF0. Códigos de 2 linhas (muito comuns no Action Replay) ficam no MESMO cheat, na ordem, uma linha embaixo da outra. Use só um tipo de código (GameShark ou Action Replay) por jogo."))
         val row = LinearLayout(this).apply {
             addView(Dlg.button(this@MainActivity, "Cancelar", false) { dlg.dismiss(); cheatsDialog() }, LinearLayout.LayoutParams(0, -2, 1f).apply { rightMargin = T.dp(this@MainActivity, 8) })
             addView(Dlg.button(this@MainActivity, "Salvar", true) {

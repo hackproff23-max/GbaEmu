@@ -33,6 +33,11 @@ class GbaRenderer(private val ctx: Context, private val emu: Emulator, private v
     @Volatile var bgFile: File? = null
     @Volatile var bgDim = 50
     @Volatile private var bgDirty = true
+    // cores e efeitos (0 = original): brilho, contraste e saturação de -100 a 100; fxLcd de 0 a 100
+    @Volatile var fxBright = 0
+    @Volatile var fxContrast = 0
+    @Volatile var fxSat = 0
+    @Volatile var fxLcd = 0
 
     /** Define (ou tira, com null) a imagem de fundo desenhada atrás da tela do jogo. PNG, JPG ou GIF animado. */
     fun setBackground(f: File?) { bgFile = f; bgDirty = true }
@@ -69,6 +74,14 @@ class GbaRenderer(private val ctx: Context, private val emu: Emulator, private v
     private var bgLastUpd = 0L
     private var bgQuadW = 0
     private var bgQuadH = 0
+    private var fxProg = 0
+    private var fxLocAdj = -1
+    private var fxLocLcd = -1
+    private var fxLocSrc = -1
+    private var fxFbo = 0
+    private var fxTex = 0
+    private var fxW = 0
+    private var fxH = 0
     private val fbo = IntArray(16)
     private val fboTex = IntArray(16)
     private val fboW = IntArray(16)
@@ -89,6 +102,11 @@ class GbaRenderer(private val ctx: Context, private val emu: Emulator, private v
         upload(vbo[0], floatArrayOf(-1f, 1f, 0f, 0f, -1f, -1f, 0f, 1f, 1f, 1f, 1f, 0f, 1f, -1f, 1f, 1f))   // tela
         upload(vbo[1], floatArrayOf(-1f, -1f, 0f, 0f, -1f, 1f, 0f, 1f, 1f, -1f, 1f, 0f, 1f, 1f, 1f, 1f))   // FBO (invertido)
         passthrough = try { build(PASS_VS, PASS_FS).let { Pass(it.prog, it.uniforms, PassSpec("@pass"), emptyMap()) } } catch (e: Exception) { report("Shader base: ${e.message}"); null }
+        fxFbo = 0; fxTex = 0; fxW = 0; fxH = 0
+        fxProg = try { build(PASS_VS, FX_FS).prog } catch (e: Exception) { report("Cores e efeitos: ${e.message}"); 0 }
+        if (fxProg != 0) {
+            fxLocAdj = GLES20.glGetUniformLocation(fxProg, "u_adj"); fxLocLcd = GLES20.glGetUniformLocation(fxProg, "u_lcd"); fxLocSrc = GLES20.glGetUniformLocation(fxProg, "u_src")
+        }
     }
 
     override fun onSurfaceChanged(gl: GL10?, w: Int, h: Int) { surfW = w; surfH = h }
@@ -138,13 +156,16 @@ class GbaRenderer(private val ctx: Context, private val emu: Emulator, private v
         val n = chain.size
         val sc = scale.coerceIn(1, 6)
         val outs = arrayOfNulls<Ref>(n)
+        // Cores e efeitos: só gasta uma passada extra quando algum valor é diferente de 0
+        val fx = fxProg != 0 && (fxBright != 0 || fxContrast != 0 || fxSat != 0 || fxLcd != 0)
         for (i in 0 until n) {
             val last = i == n - 1
             val p = chain[i]; val spc = p.spec
             val outW: Int; val outH: Int
             if (last) {
-                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
-                GLES20.glViewport(dx, dy, dw, dh); outW = dw; outH = dh
+                if (fx) { ensureFxFbo(dw, dh); GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fxFbo); GLES20.glViewport(0, 0, dw, dh) }
+                else { GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0); GLES20.glViewport(dx, dy, dw, dh) }
+                outW = dw; outH = dh
             } else {
                 outW = outDim(spc.typeX, spc.scaleX, cur.w, dw, srcW, sc)
                 outH = outDim(spc.typeY, spc.scaleY, cur.h, dh, srcH, sc)
@@ -157,10 +178,38 @@ class GbaRenderer(private val ctx: Context, private val emu: Emulator, private v
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, cur.tex)
             texParams(spc.linear ?: linear, "clamp")
             setUniforms(p, i, cur, orig, outs, outW, outH)
-            drawQuad(if (last) vbo[0] else vbo[1])
+            drawQuad(if (last && !fx) vbo[0] else vbo[1])
             if (!last) { cur = Ref(fboTex[i], outW, outH); outs[i] = cur }
         }
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+        if (fx) {
+            GLES20.glViewport(dx, dy, dw, dh)
+            GLES20.glUseProgram(fxProg)
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, fxTex)
+            texParams(false, "clamp")
+            GLES20.glUniform3f(fxLocAdj, fxBright / 100f, fxContrast / 100f, fxSat / 100f)
+            GLES20.glUniform1f(fxLocLcd, fxLcd / 100f)
+            GLES20.glUniform2f(fxLocSrc, srcW.toFloat(), srcH.toFloat())
+            drawQuad(vbo[0])
+        }
+    }
+
+    private fun ensureFxFbo(w: Int, h: Int) {
+        val t = IntArray(1)
+        if (fxFbo == 0) {
+            GLES20.glGenFramebuffers(1, t, 0); fxFbo = t[0]
+            GLES20.glGenTextures(1, t, 0); fxTex = t[0]
+        }
+        if (fxW != w || fxH != h) {
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, fxTex)
+            GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, w, h, 0, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null)
+            texParams(false, "clamp")
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fxFbo)
+            GLES20.glFramebufferTexture2D(GLES20.GL_FRAMEBUFFER, GLES20.GL_COLOR_ATTACHMENT0, GLES20.GL_TEXTURE_2D, fxTex, 0)
+            fxW = w; fxH = h
+        }
     }
 
     // ---------- fundo (imagem / GIF) ----------
@@ -532,6 +581,13 @@ class GbaRenderer(private val ctx: Context, private val emu: Emulator, private v
 
     companion object {
         private const val PASS_VS = "attribute vec2 a_position;attribute vec2 a_texcoord0;varying vec2 v_uv;void main(){gl_Position=vec4(a_position,0.0,1.0);v_uv=a_texcoord0;}"
+        // Cores e efeitos: contraste, brilho e saturação (0 = neutro) e grade LCD entre os pixels do jogo (u_lcd = opacidade, 0 = desligada)
+        private const val FX_FS = "precision mediump float;varying vec2 v_uv;uniform sampler2D u_tex;uniform vec3 u_adj;uniform float u_lcd;uniform vec2 u_src;" +
+            "void main(){vec3 c=texture2D(u_tex,v_uv).rgb;" +
+            "c=(c-0.5)*(1.0+u_adj.y)+0.5;c+=u_adj.x*0.4;" +
+            "float l=dot(c,vec3(0.299,0.587,0.114));c=mix(vec3(l),c,1.0+u_adj.z);" +
+            "if(u_lcd>0.0){vec2 f=fract(v_uv*u_src);vec2 e=min(f,1.0-f);float m=smoothstep(0.0,0.22,min(e.x,e.y));c*=mix(1.0-u_lcd,1.0,m);}" +
+            "gl_FragColor=vec4(clamp(c,0.0,1.0),1.0);}"
         private const val PASS_FS = "precision mediump float;varying vec2 v_uv;uniform sampler2D u_tex;void main(){gl_FragColor=texture2D(u_tex,v_uv);}"
     }
 }

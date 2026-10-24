@@ -18,3 +18,5 @@ Emulador de GBA com núcleo **mGBA (libretro)**, shaders GLSL importáveis, bot�
 - **Orientação de tela**: Configurações > Vídeo (Automático, Retrato, Paisagem).
 - **Botões PNG**: Configurações > Controle > botões PNG (escolher cada um, exportar para editar em outro app).
 - **Fundo**: Configurações > Avançado > Imagem de fundo (PNG, JPG ou GIF).
+- **Cores e efeitos** (menu ☰ do jogo): Brilho, Contraste e Saturação (-100 a +100) e Efeito LCD (opacidade da grade entre os pixels, 0 a 100). Tudo começa em 0 (imagem original); só gasta desempenho quando algum valor sai de 0.
+- **Orientação**: Configurações > Vídeo tem duas escolhas separadas, uma para o app (biblioteca e configurações) e outra para o jogo.

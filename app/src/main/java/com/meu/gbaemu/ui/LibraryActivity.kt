@@ -165,7 +165,7 @@ class LibraryActivity : Activity() {
         rowBtn("Teclado deste jogo: ${p.kbFor(g.id)}") {
             pick("Perfil de teclado", KB_PROFILES, KB_PROFILES.indexOf(p.kbFor(g.id))) { p.setKb(g.id, KB_PROFILES[it]); again() }
         }
-        choice("Orientação", "orient", listOf("Automático", "Retrato", "Paisagem"), listOf("auto", "retrato", "paisagem"))
+        choice("Orientação do jogo", "orient", listOf("Automático", "Retrato", "Paisagem"), listOf("auto", "retrato", "paisagem"))
         val ratios = listOf("Original 3:2", "4:3", "16:9", "Tela cheia")
         choice("Proporção da tela", "ratio", ratios, ratios)
         choice("Fast-forward", "ff", FF_STEPS, FF_STEPS)

@@ -48,9 +48,15 @@ class Prefs(c: Context) {
     }.apply()
 
     // vídeo
-    var orient get() = s("orient", "auto"); set(v) = put("orient", v)          // auto | retrato | paisagem
-    /** Aplica a orientação de tela escolhida nas configurações (vale para biblioteca e configurações). */
-    fun applyOrientation(a: Activity) { a.requestedOrientation = orientCode(orient) }
+    var orient get() = s("orient", "auto"); set(v) = put("orient", v)          // orientação do JOGO: auto | retrato | paisagem
+    var orientApp get() = s("orientApp", "auto"); set(v) = put("orientApp", v) // orientação do APP (biblioteca e configurações)
+    /** Aplica a orientação do app (biblioteca e configurações). O jogo usa orientFor(), que lê a orientação do jogo. */
+    fun applyOrientation(a: Activity) { a.requestedOrientation = orientCode(orientApp) }
+    // cores e efeitos do jogo (0 = imagem original)
+    var fxBright get() = i("fxBright", 0); set(v) = put("fxBright", v)          // -100..100
+    var fxContrast get() = i("fxContrast", 0); set(v) = put("fxContrast", v)    // -100..100
+    var fxSat get() = i("fxSat", 0); set(v) = put("fxSat", v)                   // -100..100
+    var fxLcd get() = i("fxLcd", 0); set(v) = put("fxLcd", v)                   // 0..100 (opacidade da grade LCD)
     var ratio get() = s("ratio", "Original 3:2"); set(v) = put("ratio", v)      // Original 3:2 | 4:3 | 16:9 | Tela cheia
     /** Posição/tamanho da tela por orientação: [x, y, s] ou null (padrão). */
     fun screenRect(land: Boolean): FloatArray? = s(if (land) "scrL" else "scrP", "").split(",").mapNotNull { it.toFloatOrNull() }.takeIf { it.size == 3 }?.toFloatArray()
@@ -150,7 +156,7 @@ class Prefs(c: Context) {
 
     // imagem de fundo (EmuladorPro/Configuracoes/fundo.png|jpg|gif)
     fun bgFile(): File? = Store.dir(ctx, "config").listFiles()?.filter { it.isFile && it.name.startsWith("fundo.") && it.name != "fundo.tmp" }?.maxByOrNull { it.lastModified() }
-    fun clearBg() { Store.dir(ctx, "config").listFiles()?.filter { it.name.startsWith("fundo.") }?.forEach { it.delete() } }
+    fun clearBg() { Store.dir(ctx, "config").listFiles()?.filter { it.name.startsWith("fundo.") && it.name != "fundo.tmp" }?.forEach { it.delete() } }
     /** Copia a imagem escolhida (PNG, JPG ou GIF) para a pasta Configuracoes, só se o arquivo for mesmo uma imagem. */
     fun importBg(input: InputStream): Boolean {
         val dir = Store.dir(ctx, "config")

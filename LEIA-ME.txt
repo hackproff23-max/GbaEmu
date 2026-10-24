@@ -1,11 +1,11 @@
-PATCH 5 - GBA Emu
+PATCH 6 - GBA Emu
 =================
 Termux, na pasta do projeto (troque o caminho do zip se ele estiver em outro lugar):
 
   cd ~/GbaEmu
-  unzip -o ~/storage/downloads/gba-emu-patch-5.zip -d ~/GbaEmu
+  unzip -o ~/storage/downloads/gba-emu-patch-6.zip -d ~/GbaEmu
   git add .
-  git commit -m "Cheats, shader ao vivo, orientacao, botoes PNG, pasta EmuladorPro, fundo"
+  git commit -m "Patch 6: fundo corrigido, orientacao app/jogo, cores e efeitos, cheats"
   git push
 
 Depois baixe o APK em: GitHub > Actions > Build APK > Artifacts (GbaEmu-debug).
@@ -13,27 +13,21 @@ Se a compilacao der erro, copie a mensagem vermelha do Actions e me mande.
 
 O QUE MUDOU
 -----------
-- Menu de cheats no jogo: Configuracoes > Avancado > "Mostrar menu de cheats no jogo". Aparece "Cheats" no menu (☰).
-- Shader aplicada sem sair do jogo: ao voltar das Configuracoes tudo e relido; no menu do jogo
-  Shaders > "Escolher shader deste jogo" troca na hora.
-- Orientacao de tela: Configuracoes > Video > Orientacao de tela: Automatico / Retrato / Paisagem.
-  Automatico segue o giro automatico do celular (com o giro travado nao vira sozinho).
-- Botoes PNG: Configuracoes > Controle > "Escolher / exportar botoes PNG" (tambem em ☰ > Controles > Botoes em PNG).
-- Saves .sav, estados, cheats, capas e botoes ficam na pasta EmuladorPro (veja abaixo).
-- Fundo: Configuracoes > Avancado > Imagem de fundo (PNG, JPG ou GIF).
+- FUNDO CORRIGIDO: ao escolher a imagem, o app apagava o proprio arquivo temporario e o fundo nunca era aplicado
+  (PNG, JPG e GIF). Agora funciona. Configuracoes > Avancado > Imagem de fundo.
+- ORIENTACAO SEPARADA: Configuracoes > Video tem "Orientacao do app" (biblioteca e configuracoes) e
+  "Orientacao do jogo" (so dentro do jogo). Cada jogo ainda pode ter a sua na Biblioteca.
+- CORES E EFEITOS (menu ☰ do jogo): Brilho, Contraste, Saturacao (-100 a +100) e Efeito LCD (0 a 100 = opacidade da grade).
+  Tudo comeca em 0 = imagem original. Os ajustes aparecem ao vivo enquanto voce mexe e ficam salvos.
+- CHEATS: os cheats sao reaplicados depois de reiniciar o jogo e de carregar um estado (incluindo o auto-resume).
 
-PASTA EmuladorPro (memoria interna)
------------------------------------
-  EmuladorPro/Configuracoes   configuracoes.json (copia das configuracoes) e fundo.png/jpg/gif
-  EmuladorPro/SaveStates      <jogo>.st1 ... st5, <jogo>.st0 (auto-save) e fotos .jpg
-  EmuladorPro/Saves           <jogo>.sav
-  EmuladorPro/Cheats          <jogo>.cht   (uma linha por cheat:  1|Nome|CODIGO   1=ligado, 0=desligado)
-  EmuladorPro/Capas           <jogo>.jpg
-  EmuladorPro/Controles       a.png b.png l.png r.png start.png select.png dpad.png stick_base.png stick_knob.png menu.png
+SOBRE OS CHEATS (Fire Red)
+--------------------------
+Os codigos 509197D3 542975F4 e 78DA95DF 44018CB4 sao UM codigo so, de 2 linhas (Action Replay v3, criptografado).
+O nucleo mGBA le como um patch de ROM no endereco 08058E2E. Coloque as duas linhas no MESMO cheat, na ordem:
 
-No primeiro uso o app pede "acesso a todos os arquivos" para criar essa pasta. Sem a permissao, ele usa uma
-pasta privada do app e passa tudo para EmuladorPro quando voce permitir (Configuracoes > Avancado).
-Saves e estados antigos sao copiados sozinhos para a nova pasta na primeira vez que o jogo abre.
+  509197D3 542975F4
+  78DA95DF 44018CB4
 
-CHEATS: codigos GameShark / Action Replay / CodeBreaker do GBA, uma linha por codigo:
-  82025840 0001     ou     12345678 9ABCDEF0
+Nao misture tipos de codigo (GameShark e Action Replay) no mesmo jogo: o mGBA decide o tipo pela primeira linha.
+Codigo de patch de ROM so funciona na versao certa da ROM (a mesma para a qual o codigo foi feito).
