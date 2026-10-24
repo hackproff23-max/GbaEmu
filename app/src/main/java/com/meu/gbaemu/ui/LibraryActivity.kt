@@ -240,7 +240,7 @@ class LibraryActivity : Activity() {
     private fun pick(title: String, labels: List<String>, cur: Int, done: (Int) -> Unit) {
         lateinit var dlg: AlertDialog
         val rows = labels.mapIndexed { i, t -> Row(null, t, checked = i == cur) { done(i) } }
-        dlg = AlertDialog.Builder(this, AlertDialog.THEME_DEVICE_DEFAULT_DARK).setView(Dlg.content(this, title, rows) { dlg.dismiss() }).create()
+        dlg = AlertDialog.Builder(this, AlertDialog.THEME_DEVICE_DEFAULT_DARK).setView(Dlg.content(this, title, rows, { dlg.dismiss() })).create()
         dlg.show(); dlg.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
     }
 
