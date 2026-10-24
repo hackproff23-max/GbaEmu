@@ -122,7 +122,7 @@ object Backup {
     }
 
     /** Converte o endereço de um jogo da biblioteca em arquivo real, quando dá (precisa do acesso a todos os arquivos). */
-    private fun pathOf(u: String): File? = try {
+    fun pathOf(u: String): File? = try {
         val uri = Uri.parse(u)
         when (uri.scheme) {
             "file" -> uri.path?.let { File(it) }

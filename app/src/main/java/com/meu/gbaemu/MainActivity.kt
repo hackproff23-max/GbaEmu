@@ -227,8 +227,14 @@ class MainActivity : Activity() {
 
     // ---------- ROM ----------
     private fun loadRom(u: Uri) {
-        var name = displayName(u)
-        var bytes = contentResolver.openInputStream(u)!!.use { it.readBytes() }
+        // Permissão do endereço salva perdida (reinstalou/atualizou o app)? Tenta abrir direto pelo caminho do arquivo.
+        val direct = try { Backup.pathOf(u.toString())?.takeIf { it.exists() && it.canRead() } } catch (e: Exception) { null }
+        var name = try { displayName(u) } catch (e: SecurityException) { direct?.name ?: "jogo.gba" }
+        var bytes = try { contentResolver.openInputStream(u)!!.use { it.readBytes() } }
+        catch (e: Exception) {
+            if (direct != null) direct.readBytes()
+            else throw RuntimeException("sem permissão para ler este jogo. Em Configurações toque em “Permitir acesso à memória interna” ou adicione a ROM de novo na biblioteca")
+        }
         if (name.lowercase().endsWith(".zip")) {
             ZipInputStream(ByteArrayInputStream(bytes)).use { z ->
                 var e = z.nextEntry
