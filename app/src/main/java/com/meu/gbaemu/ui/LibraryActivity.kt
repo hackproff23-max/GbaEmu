@@ -10,6 +10,7 @@ import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import android.os.Bundle
+import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.text.Editable
 import android.text.TextWatcher
@@ -17,6 +18,8 @@ import android.view.Gravity
 import android.view.View
 import android.widget.*
 import com.meu.gbaemu.MainActivity
+import java.io.InputStream
+import java.util.zip.ZipInputStream
 
 class LibraryActivity : Activity() {
     private lateinit var p: Prefs
@@ -57,6 +60,10 @@ class LibraryActivity : Activity() {
             orientation = LinearLayout.VERTICAL; setPadding(T.dp(context, 16), 0, T.dp(context, 16), T.dp(context, 24))
             addView(search); addView(chipHost); addView(T.note(context, "Toque para jogar · segure um jogo para configurar e trocar a capa")); addView(list)
             addView(add, LinearLayout.LayoutParams(-1, -2).apply { topMargin = T.dp(this@LibraryActivity, 12) })
+            addView(T.text(context, "📁  Procurar todas as ROMs numa pasta", 14f, T.GOLD, true).apply {
+                gravity = Gravity.CENTER; background = T.box(context, T.CARD, T.GOLD)
+                setPadding(0, T.dp(context, 12), 0, T.dp(context, 12)); setOnClickListener { pickFolder() }
+            }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = T.dp(this@LibraryActivity, 10) })
             addView(T.text(context, "⬇  Baixar capas dos jogos (online, opcional)", 14f, T.GOLD, true).apply {
                 gravity = Gravity.CENTER; background = T.box(context, T.CARD, T.GOLD)
                 setPadding(0, T.dp(context, 12), 0, T.dp(context, 12)); setOnClickListener { downloadCovers(p.games(), false) }
@@ -173,6 +180,7 @@ class LibraryActivity : Activity() {
         section("Capa", listOfNotNull(
             Row("image", if (hasCover) "Trocar capa" else "Escolher capa", "da galeria") { pickCover(g) },
             Row("import", "Baixar capa", "online, opcional") { downloadCovers(listOf(g), true) },
+            Row("image", "Capa do jogo original", "usar a de outro jogo da lista") { pickOriginal(g) { again() } },
             if (hasCover) Row("trash", "Remover capa") { p.coverFile(g.id).delete(); covers.clear(); again() } else null))
 
         val ratios = listOf("Original 3:2", "4:3", "16:9", "Tela cheia")
@@ -210,7 +218,7 @@ class LibraryActivity : Activity() {
                 if (try { Covers.fetch(this, p, g) } catch (e: Throwable) { false }) ok++ else fail++
             }
             Net.main.post {
-                pd.close(); covers.clear(); fill()
+                pd.close(); covers.clear(); fill(); linkCovers()
                 Toast.makeText(this, if (ok == 0 && fail > 0) "Não consegui baixar (sem internet ou jogo não encontrado)" else "$ok capa(s) baixada(s)" + if (fail > 0) " · $fail não encontrada(s)" else "", Toast.LENGTH_LONG).show()
             }
         }.start()
@@ -271,6 +279,7 @@ class LibraryActivity : Activity() {
         super.onActivityResult(req, res, data)
         if (res != RESULT_OK || data == null) return
         if (req == 2) { saveCover(data.data); return }
+        if (req == 3) { data.data?.let { scanFolder(it) }; return }
         if (req != 1) return
         val uris = ArrayList<Uri>()
         data.clipData?.let { cd -> for (i in 0 until cd.itemCount) uris += cd.getItemAt(i).uri }
@@ -281,6 +290,150 @@ class LibraryActivity : Activity() {
             val n = displayName(u); if (ok.any { n.lowercase().endsWith(it) }) u.toString() to n else null
         }
         if (add.isEmpty()) Toast.makeText(this, "Nenhum arquivo .gba/.zip válido", Toast.LENGTH_SHORT).show()
-        p.addGames(add); fill()
+        p.addGames(add); fill(); linkCovers()
+    }
+
+    // ---------------- Procurar todas as ROMs de uma pasta (com subpastas) ----------------
+
+    private val romExt = listOf(".gba", ".gb", ".gbc", ".zip")
+
+    private fun pickFolder() {
+        Toast.makeText(this, "Escolha a pasta das ROMs e toque em “Usar esta pasta”", Toast.LENGTH_LONG).show()
+        startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)
+        }, 3)
+    }
+
+    private fun scanFolder(tree: Uri) {
+        try { contentResolver.takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (e: Exception) { }
+        val pd = ProgressDlg(this, "Procurando ROMs")
+        val known = p.games().map { it.uri }.toHashSet()
+        Thread {
+            val found = ArrayList<Pair<String, String>>()
+            val stack = ArrayList<String>()
+            stack.add(DocumentsContract.getTreeDocumentId(tree))
+            var folders = 0
+            try {
+                while (stack.isNotEmpty() && !pd.cancelled && folders < 5000) {
+                    val dir = stack.removeAt(stack.size - 1); folders++
+                    val kids = DocumentsContract.buildChildDocumentsUriUsingTree(tree, dir)
+                    val cols = arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE)
+                    contentResolver.query(kids, cols, null, null, null)?.use { c ->
+                        while (c.moveToNext()) {
+                            val id = c.getString(0) ?: continue
+                            val name = c.getString(1) ?: continue
+                            if (c.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR) { stack.add(id); continue }
+                            val low = name.lowercase()
+                            if (romExt.none { low.endsWith(it) }) continue
+                            val u = DocumentsContract.buildDocumentUriUsingTree(tree, id)
+                            if (u.toString() in known) continue
+                            if (low.endsWith(".zip") && !zipHasRom(u)) continue
+                            found += u.toString() to name
+                            pd.set("${found.size} jogo(s) encontrado(s)\n$name")
+                        }
+                    }
+                }
+            } catch (e: Throwable) { }
+            Net.main.post {
+                pd.close()
+                if (found.isEmpty()) Toast.makeText(this, "Nenhuma ROM nova encontrada nessa pasta", Toast.LENGTH_LONG).show()
+                else {
+                    p.addGames(found); fill()
+                    Toast.makeText(this, "${found.size} jogo(s) adicionado(s)", Toast.LENGTH_LONG).show()
+                    linkCovers()
+                }
+            }
+        }.start()
+    }
+
+    /** Um .zip só entra na lista se tiver uma ROM dentro (olha só as primeiras entradas). */
+    private fun zipHasRom(u: Uri): Boolean = try {
+        var ok = false
+        contentResolver.openInputStream(u)?.use { ins ->
+            ZipInputStream(ins.buffered()).use { z ->
+                var n = 0
+                var e = z.nextEntry
+                while (e != null && n < 8 && !ok) {
+                    val l = e.name.lowercase()
+                    ok = l.endsWith(".gba") || l.endsWith(".gb") || l.endsWith(".gbc")
+                    n++
+                    if (!ok) e = z.nextEntry
+                }
+            }
+        }
+        ok
+    } catch (e: Throwable) { false }
+
+    // ---------------- Mods (hacks) usam a capa do jogo original ----------------
+
+    private val codes = HashMap<String, String?>()
+
+    private fun readN(ins: InputStream, n: Int): ByteArray? {
+        val b = ByteArray(n); var o = 0
+        while (o < n) { val r = ins.read(b, o, n - o); if (r < 0) return null; o += r }
+        return b
+    }
+
+    /** Código de 4 letras do jogo, lido do cabeçalho da ROM (os hacks costumam manter o do original). */
+    private fun gameCode(g: Game): String? = codes.getOrPut(g.id) {
+        try {
+            val low = g.name.lowercase()
+            val h: ByteArray? = contentResolver.openInputStream(Uri.parse(g.uri))?.use { ins ->
+                if (low.endsWith(".zip")) ZipInputStream(ins.buffered()).use { z ->
+                    var r: ByteArray? = null
+                    var n = 0
+                    var e = z.nextEntry
+                    while (e != null && n < 8 && r == null) {
+                        if (e.name.lowercase().endsWith(".gba")) r = readN(z, 0xB0) else { n++; e = z.nextEntry }
+                    }
+                    r
+                } else if (low.endsWith(".gba")) readN(ins.buffered(), 0xB0) else null
+            }
+            h?.let { String(it, 0xAC, 4, Charsets.US_ASCII) }?.takeIf { c -> c.matches(Regex("[A-Z0-9]{4}")) }
+        } catch (e: Throwable) { null }
+    }
+
+    private fun norm(s: String) = s.substringBeforeLast('.').replace(Regex("[\\(\\[].*?[\\)\\]]"), "").lowercase().filter { it.isLetterOrDigit() }
+
+    /** Plano B: o nome do hack começa com o nome do original (ex.: "Pokemon Emerald Kaizo" → "Pokemon Emerald"). */
+    private fun byName(m: Game, cands: List<Game>): Game? {
+        val nm = norm(m.name); if (nm.length < 5) return null
+        return cands.filter { it.id != m.id && norm(it.name).let { c -> c.length >= 5 && nm.startsWith(c) } }.maxByOrNull { norm(it.name).length }
+    }
+
+    private fun copyCover(src: Game, dst: Game): Boolean = try {
+        val d = p.coverFile(dst.id); d.parentFile?.mkdirs()
+        p.coverFile(src.id).copyTo(d, true); true
+    } catch (e: Throwable) { false }
+
+    /** Jogos sem capa (mods) pegam a capa do original que já tem capa na lista. */
+    private fun linkCovers() {
+        val all = p.games()
+        Thread {
+            var n = 0
+            val comCapa = all.filter { p.coverFile(it.id).exists() }
+            val without = all.filter { !p.coverFile(it.id).exists() }
+            if (comCapa.isNotEmpty() && without.isNotEmpty()) {
+                val byCode = HashMap<String, Game>()
+                for (o in comCapa) gameCode(o)?.let { byCode.putIfAbsent(it, o) }
+                for (m in without) {
+                    val src = gameCode(m)?.let { byCode[it] } ?: byName(m, comCapa)
+                    if (src != null && src.id != m.id && copyCover(src, m)) n++
+                }
+            }
+            if (n > 0) Net.main.post {
+                covers.clear(); fill()
+                Toast.makeText(this, "$n capa(s) do jogo original aplicada(s)", Toast.LENGTH_LONG).show()
+            }
+        }.start()
+    }
+
+    /** Escolha manual: usa a capa de outro jogo da lista como capa deste mod. */
+    private fun pickOriginal(g: Game, done: () -> Unit) {
+        val c = p.games().filter { it.id != g.id && p.coverFile(it.id).exists() }.sortedBy { it.name.lowercase() }
+        if (c.isEmpty()) { Toast.makeText(this, "Nenhum outro jogo tem capa ainda. Baixe as capas primeiro.", Toast.LENGTH_LONG).show(); return }
+        pick("Capa de qual jogo original?", c.map { it.name }, -1) { i ->
+            if (copyCover(c[i], g)) { covers.clear(); Toast.makeText(this, "Capa definida", Toast.LENGTH_SHORT).show(); done() }
+        }
     }
 }
