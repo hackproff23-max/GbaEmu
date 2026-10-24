@@ -8,6 +8,12 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.GradientDrawable
+import android.content.res.Configuration
+import android.text.TextUtils
+import android.view.KeyEvent
+import android.view.ViewOutlineProvider
+import android.view.inputmethod.EditorInfo
 import android.net.Uri
 import android.os.Bundle
 import android.provider.DocumentsContract
@@ -30,9 +36,22 @@ class LibraryActivity : Activity() {
     private var bgSig = ""
     private var filter = "Todos"; private var sort = "A-Z"; private var q = ""
 
+    // ---- modo paisagem (menu em fileira horizontal) ----
+    private var land = false
+    private var selId: String? = null
+    private var shown: List<Game> = emptyList()
+    private val tiles = LinkedHashMap<String, View>()
+    private lateinit var lrow: LinearLayout
+    private lateinit var lhs: HorizontalScrollView
+    private lateinit var lname: TextView
+    private lateinit var linfo: TextView
+    private lateinit var lsortLbl: TextView
+
     override fun onCreate(b: Bundle?) {
         super.onCreate(b); p = Prefs(this); sig = T.sig(); window.statusBarColor = T.BG
         p.applyOrientation(this); bgSig = Backdrop.sig(p)
+        land = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        if (land) { setContentView(landUi()); return } // paisagem: menu novo; o retrato continua o mesmo abaixo
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = Backdrop.drawable(context, p) ?: ColorDrawable(T.BG) }
         val gear = ImageButton(this).apply {
             setImageResource(com.meu.gbaemu.R.drawable.ic_gear)
@@ -96,17 +115,23 @@ class LibraryActivity : Activity() {
 
     private fun chips() {
         chipHost.removeAllViews()
+        if (land) { chipHost.addView(T.chips(this, listOf("Todos", "Favoritos", "Recentes"), filter) { filter = it; chips(); fill() }); return }
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         col.addView(T.chips(this, listOf("Todos", "Favoritos", "Recentes"), filter) { filter = it; chips(); fill() })
         col.addView(T.chips(this, listOf("A-Z", "Último jogado"), sort) { sort = it; chips(); fill() })
         chipHost.addView(col)
     }
 
-    private fun fill() {
-        list.removeAllViews()
+    private fun visible(): List<Game> {
         var g = p.games().filter { it.name.contains(q, true) }
         g = when (filter) { "Favoritos" -> g.filter { p.isFav(it.id) }; "Recentes" -> g.filter { p.lastPlayed(it.id) > 0 }; else -> g }
-        g = if (sort == "A-Z") g.sortedBy { it.name.lowercase() } else g.sortedByDescending { p.lastPlayed(it.id) }
+        return if (sort == "A-Z") g.sortedBy { it.name.lowercase() } else g.sortedByDescending { p.lastPlayed(it.id) }
+    }
+
+    private fun fill() {
+        if (land) { fillLand(); return }
+        list.removeAllViews()
+        val g = visible()
         if (g.isEmpty()) list.addView(T.note(this, "Nenhum jogo na lista. Toque em “Adicionar jogos”."))
         g.chunked(2).forEach { pair ->
             val row = LinearLayout(this).apply { setPadding(0, T.dp(context, 6), 0, T.dp(context, 6)) }
@@ -114,6 +139,173 @@ class LibraryActivity : Activity() {
             if (pair.size == 1) row.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
             list.addView(row)
         }
+    }
+
+    // ======================= MODO PAISAGEM =======================
+
+    private fun landUi(): View {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = Backdrop.drawable(context, p)
+                ?: GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(T.BG, T.BG, T.shade(T.GOLD, 0.30f)))
+        }
+        val gear = ImageButton(this).apply {
+            setImageResource(com.meu.gbaemu.R.drawable.ic_gear)
+            background = T.box(this@LibraryActivity, T.CARD, T.GOLD); contentDescription = "Configurações"
+            setOnClickListener { startActivity(Intent(this@LibraryActivity, SettingsActivity::class.java)) }
+        }
+        val logo = ImageView(this).apply { setImageResource(com.meu.gbaemu.R.drawable.logo_gba); scaleType = ImageView.ScaleType.FIT_CENTER }
+        chipHost = FrameLayout(this)
+        val search = EditText(this).apply {
+            hint = "Buscar"; setHintTextColor(T.MUT); T.font?.let { typeface = it }; setTextColor(T.TX); setSingleLine(); textSize = 13f
+            imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI
+            background = T.box(this@LibraryActivity, T.CARD, T.LINE, 20)
+            setPadding(T.dp(context, 14), T.dp(context, 7), T.dp(context, 14), T.dp(context, 7))
+            addTextChangedListener(object : TextWatcher {
+                override fun afterTextChanged(s: Editable?) { q = s.toString(); fill() }
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            })
+        }
+        root.addView(LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL; setPadding(T.dp(context, 16), T.dp(context, 8), T.dp(context, 16), T.dp(context, 4))
+            addView(logo, LinearLayout.LayoutParams(T.dp(context, 62), T.dp(context, 34)))
+            addView(chipHost, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = T.dp(context, 12) })
+            addView(search, LinearLayout.LayoutParams(T.dp(context, 150), -2).apply { rightMargin = T.dp(context, 10) })
+            addView(gear, LinearLayout.LayoutParams(T.dp(context, 42), T.dp(context, 42)))
+        })
+        lrow = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL; clipChildren = false
+            setPadding(T.dp(context, 24), T.dp(context, 14), T.dp(context, 24), T.dp(context, 14))
+        }
+        lhs = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(lrow) }
+        root.addView(lhs, LinearLayout.LayoutParams(-1, -2))
+        lname = T.text(this, "", 26f, T.TX, true).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
+        linfo = T.text(this, "", 13f, T.MUT).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
+        root.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(T.dp(context, 28), T.dp(context, 2), T.dp(context, 28), 0)
+            addView(lname); addView(linfo)
+        }, LinearLayout.LayoutParams(-1, 0, 1f))
+        root.addView(hintBar())
+        return root
+    }
+
+    /** Barra de dicas embaixo (como na referência): cada item é tocável. */
+    private fun hintBar(): View {
+        fun hint(badge: String, label: String, click: () -> Unit): Pair<View, TextView> {
+            val lb = T.text(this, label, 12f, T.TX)
+            val v = LinearLayout(this).apply {
+                gravity = Gravity.CENTER_VERTICAL; setPadding(T.dp(context, 8), T.dp(context, 4), T.dp(context, 8), T.dp(context, 4))
+                setOnClickListener { click() }
+                addView(T.text(context, badge, 12f, T.GOLD2, true).apply {
+                    setPadding(T.dp(context, 7), T.dp(context, 2), T.dp(context, 7), T.dp(context, 2)); background = T.box(context, T.CARD, T.GOLD, 8)
+                })
+                addView(lb, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = T.dp(context, 6) })
+            }
+            return v to lb
+        }
+        val inner = LinearLayout(this).apply { gravity = Gravity.END or Gravity.CENTER_VERTICAL }
+        inner.addView(hint("＋", "Adicionar") { pickRoms() }.first)
+        inner.addView(hint("📁", "Pasta") { pickFolder() }.first)
+        inner.addView(hint("⬇", "Capas") { downloadCovers(p.games(), false) }.first)
+        val ord = hint("⇅", "Ordem: $sort") { toggleSort() }
+        lsortLbl = ord.second; inner.addView(ord.first)
+        inner.addView(hint("⋯", "Opções") { selGame()?.let { options(it) } }.first)
+        inner.addView(hint("▶", "Jogar") { selGame()?.let { play(it) } }.first)
+        return HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false; isFillViewport = true; setBackgroundColor(0x66000000)
+            setPadding(T.dp(context, 12), T.dp(context, 6), T.dp(context, 12), T.dp(context, 8))
+            addView(inner, FrameLayout.LayoutParams(-1, -2))
+        }
+    }
+
+    private fun toggleSort() { sort = if (sort == "A-Z") "Último jogado" else "A-Z"; fill() }
+
+    private fun selGame(): Game? = shown.firstOrNull { it.id == selId }
+
+    private fun fillLand() {
+        shown = visible()
+        lrow.removeAllViews(); tiles.clear()
+        lsortLbl.text = "Ordem: $sort"
+        if (shown.isEmpty()) {
+            lrow.addView(T.note(this, "Nenhum jogo na lista. Toque em “Adicionar”."))
+            lname.text = ""; linfo.text = ""; return
+        }
+        val size = (resources.displayMetrics.heightPixels * 0.40f).toInt().coerceIn(T.dp(this, 110), T.dp(this, 190))
+        shown.forEach { g ->
+            val t = tile(g)
+            tiles[g.id] = t
+            lrow.addView(t, LinearLayout.LayoutParams(size, size).apply { rightMargin = T.dp(this@LibraryActivity, 14) })
+        }
+        select(selId?.takeIf { id -> shown.any { it.id == id } } ?: shown.first().id)
+    }
+
+    private fun tile(g: Game): View {
+        val bmp = coverBitmap(g.id)
+        val inner = FrameLayout(this).apply {
+            background = GradientDrawable().apply { setColor(T.CARD); cornerRadius = T.dp(context, 12).toFloat() }
+            clipToOutline = true; outlineProvider = ViewOutlineProvider.BACKGROUND
+            val cov: View = if (bmp != null) ImageView(context).apply { setImageBitmap(bmp); scaleType = ImageView.ScaleType.CENTER_CROP }
+            else T.text(context, g.name.take(2).uppercase(), 30f, T.BG, true).apply { gravity = Gravity.CENTER; setBackgroundColor(T.GOLD) }
+            addView(cov, FrameLayout.LayoutParams(-1, -1))
+            if (p.isFav(g.id)) addView(T.text(context, "★", 16f, T.GOLD2, true).apply {
+                setPadding(T.dp(context, 7), T.dp(context, 1), T.dp(context, 7), T.dp(context, 1)); setBackgroundColor(0x99000000.toInt())
+            }, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START))
+        }
+        return FrameLayout(this).apply {
+            setPadding(T.dp(context, 3), T.dp(context, 3), T.dp(context, 3), T.dp(context, 3))
+            addView(inner, FrameLayout.LayoutParams(-1, -1))
+            styleTile(this, false)
+            // 1º toque seleciona; toque no selecionado joga; segurar abre as opções
+            setOnClickListener { if (selId == g.id) play(g) else select(g.id) }
+            setOnLongClickListener { select(g.id); options(g); true }
+        }
+    }
+
+    private fun styleTile(v: View, on: Boolean) {
+        v.background = GradientDrawable().apply {
+            setColor(0x00000000); cornerRadius = T.dp(this@LibraryActivity, 15).toFloat()
+            setStroke(T.dp(this@LibraryActivity, if (on) 3 else 1), if (on) T.GOLD2 else T.LINE)
+        }
+        val k = if (on) 1.08f else 1f
+        v.animate().scaleX(k).scaleY(k).setDuration(120).start()
+    }
+
+    private fun select(id: String) {
+        selId = id
+        tiles.forEach { (k, v) -> styleTile(v, k == id) }
+        val g = shown.firstOrNull { it.id == id } ?: return
+        lname.text = g.name
+        linfo.text = listOfNotNull(lastTxt(g.id), if (p.isFav(g.id)) "★ Favorito" else null, shLabel(p.shaderFor(g.id)), p.kbFor(g.id)).joinToString("  ·  ")
+        tiles[id]?.let { t -> lhs.post { lhs.smoothScrollTo(t.left + t.width / 2 - lhs.width / 2, 0) } }
+    }
+
+    private fun lastTxt(id: String): String {
+        val t = p.lastPlayed(id); if (t <= 0L) return "Nunca jogado"
+        val z = java.util.TimeZone.getDefault(); val day = 86400000L
+        fun d(x: Long) = (x + z.getOffset(x)) / day
+        val diff = d(System.currentTimeMillis()) - d(t)
+        return when {
+            diff <= 0L -> "Hoje"
+            diff == 1L -> "Ontem"
+            else -> java.text.SimpleDateFormat("dd/MM/yyyy", java.util.Locale.getDefault()).format(java.util.Date(t))
+        }
+    }
+
+    /** Controle/teclado no menu paisagem: ←/→ navega, A joga, Y opções, X ordem, START configurações. */
+    override fun dispatchKeyEvent(e: KeyEvent): Boolean {
+        if (land && e.action == KeyEvent.ACTION_DOWN && currentFocus !is EditText) {
+            val i = shown.indexOfFirst { it.id == selId }
+            when (e.keyCode) {
+                KeyEvent.KEYCODE_DPAD_LEFT -> { if (i > 0) select(shown[i - 1].id); return true }
+                KeyEvent.KEYCODE_DPAD_RIGHT -> { if (i >= 0 && i < shown.size - 1) select(shown[i + 1].id); return true }
+                KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_DPAD_CENTER -> { selGame()?.let { play(it) }; return true }
+                KeyEvent.KEYCODE_BUTTON_Y -> { selGame()?.let { options(it) }; return true }
+                KeyEvent.KEYCODE_BUTTON_X -> { toggleSort(); return true }
+                KeyEvent.KEYCODE_BUTTON_START -> { startActivity(Intent(this, SettingsActivity::class.java)); return true }
+            }
+        }
+        return super.dispatchKeyEvent(e)
     }
 
     private fun shLabel(v: String) = when (v) { SH_GLOBAL -> "Shader padrão"; SH_NONE -> "Sem shader"; else -> v }
