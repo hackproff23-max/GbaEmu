@@ -1,8 +1,10 @@
 package com.meu.gbaemu
 
 import android.content.Context
+import android.graphics.BitmapFactory
 import android.opengl.GLES20
 import android.opengl.GLSurfaceView
+import android.opengl.GLUtils
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -11,8 +13,9 @@ import javax.microedition.khronos.opengles.GL10
 
 /**
  * Cadeia de shaders em várias passadas.
- * Aceita .glsl (formato RetroArch/libretro, arquivo único com VERTEX/FRAGMENT)
- * e pares .vsh/.fsh. Uniforms e atributos são detectados por nome/tipo.
+ * Aceita .glsl (formato RetroArch/libretro, arquivo único com VERTEX/FRAGMENT), pares .vsh/.fsh
+ * e presets multipass .glslp (várias passadas, escala por passada, parâmetros, apelidos e texturas PNG).
+ * Uniforms e atributos são detectados por nome/tipo.
  */
 class GbaRenderer(private val ctx: Context, private val emu: Emulator, private val report: (String) -> Unit) : GLSurfaceView.Renderer {
     @Volatile var shaderKeys: List<String> = emptyList()
@@ -24,7 +27,19 @@ class GbaRenderer(private val ctx: Context, private val emu: Emulator, private v
     @Volatile var rectLand: FloatArray? = null
 
     private class U(val loc: Int, val name: String, val type: Int)
-    private class Pass(val prog: Int, val uniforms: List<U>)
+    /** Como uma passada é dimensionada: orig = tamanho original * escala global (modo antigo); source, viewport, absolute = libretro. */
+    private class PassSpec(val file: String, val alias: String = "", val typeX: String = "orig", val typeY: String = "orig",
+                           val scaleX: Float = 1f, val scaleY: Float = 1f, val linear: Boolean? = null)
+    private class Built(val prog: Int, val uniforms: List<U>)
+    private class Pass(val prog: Int, val uniforms: List<U>, val spec: PassSpec, val params: Map<String, Float>)
+    private class Ref(val tex: Int, val w: Int, val h: Int)
+    private class Lut(val tex: Int, val w: Int, val h: Int, val linear: Boolean, val wrap: String)
+    private class LutSpec(val name: String, val file: String, val linear: Boolean, val wrap: String)
+    private class Preset(val passes: List<PassSpec>, val luts: List<LutSpec>, val params: Map<String, Float>)
+
+    private val luts = HashMap<String, Lut>()
+    private val rePrev = Regex("PassPrev(\\d+)", RegexOption.IGNORE_CASE)
+    private val rePass = Regex("Pass(\\d+)", RegexOption.IGNORE_CASE)
 
     private var chain: List<Pass> = emptyList()
     private var passthrough: Pass? = null
@@ -32,10 +47,10 @@ class GbaRenderer(private val ctx: Context, private val emu: Emulator, private v
     private var srcW = 0
     private var srcH = 0
     private val vbo = IntArray(2)
-    private val fbo = IntArray(8)
-    private val fboTex = IntArray(8)
-    private val fboW = IntArray(8)
-    private val fboH = IntArray(8)
+    private val fbo = IntArray(16)
+    private val fboTex = IntArray(16)
+    private val fboW = IntArray(16)
+    private val fboH = IntArray(16)
     private var surfW = 1
     private var surfH = 1
     private var frame = 0
@@ -44,13 +59,13 @@ class GbaRenderer(private val ctx: Context, private val emu: Emulator, private v
 
     override fun onSurfaceCreated(gl: GL10?, c: EGLConfig?) {
         fbo.fill(0); fboTex.fill(0); fboW.fill(0); fboH.fill(0)
-        srcW = 0; srcH = 0; chain = emptyList(); dirty = true
+        srcW = 0; srcH = 0; chain = emptyList(); luts.clear(); dirty = true
         val t = IntArray(1)
         GLES20.glGenTextures(1, t, 0); srcTex = t[0]
         GLES20.glGenBuffers(2, vbo, 0)
         upload(vbo[0], floatArrayOf(-1f, 1f, 0f, 0f, -1f, -1f, 0f, 1f, 1f, 1f, 1f, 0f, 1f, -1f, 1f, 1f))   // tela
         upload(vbo[1], floatArrayOf(-1f, -1f, 0f, 0f, -1f, 1f, 0f, 1f, 1f, -1f, 1f, 0f, 1f, 1f, 1f, 1f))   // FBO (invertido)
-        passthrough = try { build(PASS_VS, PASS_FS) } catch (e: Exception) { report("Shader base: ${e.message}"); null }
+        passthrough = try { build(PASS_VS, PASS_FS).let { Pass(it.prog, it.uniforms, PassSpec("@pass"), emptyMap()) } } catch (e: Exception) { report("Shader base: ${e.message}"); null }
     }
 
     override fun onSurfaceChanged(gl: GL10?, w: Int, h: Int) { surfW = w; surfH = h }
@@ -94,43 +109,107 @@ class GbaRenderer(private val ctx: Context, private val emu: Emulator, private v
             dx = (surfW - dw) / 2; dy = (surfH - dh) / 2
         }
         frame++
-        var inTex = srcTex; var inW = srcW; var inH = srcH
+        val orig = Ref(srcTex, srcW, srcH)
+        var cur = orig
         val n = chain.size
         val sc = scale.coerceIn(1, 6)
+        val outs = arrayOfNulls<Ref>(n)
         for (i in 0 until n) {
             val last = i == n - 1
-            val p = chain[i]
+            val p = chain[i]; val spc = p.spec
             val outW: Int; val outH: Int
             if (last) {
                 GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
                 GLES20.glViewport(dx, dy, dw, dh); outW = dw; outH = dh
             } else {
-                outW = srcW * sc; outH = srcH * sc
+                outW = outDim(spc.typeX, spc.scaleX, cur.w, dw, srcW, sc)
+                outH = outDim(spc.typeY, spc.scaleY, cur.h, dh, srcH, sc)
                 ensureFbo(i, outW, outH)
                 GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fbo[i])
                 GLES20.glViewport(0, 0, outW, outH)
             }
             GLES20.glUseProgram(p.prog)
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
-            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, inTex)
-            val f = if (linear) GLES20.GL_LINEAR else GLES20.GL_NEAREST
-            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, f)
-            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, f)
-            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
-            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
-            setUniforms(p, inW, inH, outW, outH)
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, cur.tex)
+            texParams(spc.linear ?: linear, "clamp")
+            setUniforms(p, i, cur, orig, outs, outW, outH)
             drawQuad(if (last) vbo[0] else vbo[1])
-            if (!last) { inTex = fboTex[i]; inW = outW; inH = outH }
+            if (!last) { cur = Ref(fboTex[i], outW, outH); outs[i] = cur }
         }
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
     }
 
-    private fun setUniforms(p: Pass, inW: Int, inH: Int, outW: Int, outH: Int) {
+    private fun outDim(type: String, s: Float, inD: Int, vpD: Int, origD: Int, sc: Int): Int = when (type) {
+        "viewport" -> (vpD * s).toInt()
+        "absolute" -> s.toInt()
+        "orig" -> origD * sc
+        else -> (inD * s).toInt()
+    }.coerceIn(1, 4096)
+
+    private fun texParams(l: Boolean, wrap: String) {
+        val f = if (l) GLES20.GL_LINEAR else GLES20.GL_NEAREST
+        val w = when (wrap) { "repeat" -> GLES20.GL_REPEAT; "mirrored_repeat" -> GLES20.GL_MIRRORED_REPEAT; else -> GLES20.GL_CLAMP_TO_EDGE }
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, f)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, f)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, w)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, w)
+    }
+
+    /** Textura citada por nome: Orig, PassPrevN, PassN, apelido da passada ou textura PNG do preset. */
+    private fun refFor(base: String, idx: Int, orig: Ref, outs: Array<Ref?>): Ref? {
+        if (base.isEmpty()) return null
+        if (base.equals("Orig", true) || base.equals("Original", true)) return orig
+        rePrev.matchEntire(base)?.let { m -> val j = idx - m.groupValues[1].toInt(); return if (j >= 0) outs[j] else orig }
+        rePass.matchEntire(base)?.let { m -> val j = m.groupValues[1].toInt() - 1; return if (j in 0 until idx) outs[j] else null }
+        luts[base]?.let { return Ref(it.tex, it.w, it.h) }
+        val a = chain.indexOfFirst { it.spec.alias.isNotEmpty() && it.spec.alias == base }
+        if (a in 0 until idx) return outs[a]
+        return null
+    }
+
+    private fun sizeRefFor(nm: String, idx: Int, orig: Ref, outs: Array<Ref?>): Ref? {
+        val base = when {
+            nm.endsWith("TextureSize") -> nm.removeSuffix("TextureSize")
+            nm.endsWith("InputSize") -> nm.removeSuffix("InputSize")
+            nm.endsWith("OutputSize") -> return null
+            nm.endsWith("Size") -> nm.removeSuffix("Size")
+            nm.endsWith("_size") -> nm.removeSuffix("_size")
+            else -> return null
+        }
+        return refFor(base, idx, orig, outs)
+    }
+
+    private fun setUniforms(p: Pass, idx: Int, cur: Ref, orig: Ref, outs: Array<Ref?>, outW: Int, outH: Int) {
+        var unit = 1
+        val lin = p.spec.linear ?: linear
+        val inW = cur.w; val inH = cur.h
         for (u in p.uniforms) {
-            val n = u.name.lowercase()
+            val nm = u.name; val n = nm.lowercase()
             val isOut = n.contains("output") || n.contains("outsize") || n.contains("viewport")
+            if (u.type == GLES20.GL_SAMPLER_2D) {
+                val lut = luts[nm]
+                val ref = if (lut != null) Ref(lut.tex, lut.w, lut.h)
+                    else if (nm.length > 7 && nm.endsWith("Texture")) refFor(nm.removeSuffix("Texture"), idx, orig, outs) else null
+                if (ref == null || unit > 7) GLES20.glUniform1i(u.loc, 0)
+                else {
+                    GLES20.glActiveTexture(GLES20.GL_TEXTURE0 + unit)
+                    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, ref.tex)
+                    if (lut != null) texParams(lut.linear, lut.wrap) else texParams(lin, "clamp")
+                    GLES20.glUniform1i(u.loc, unit); unit++
+                }
+                continue
+            }
+            val pv = if (u.type == GLES20.GL_FLOAT) p.params[nm] else null
+            if (pv != null) { GLES20.glUniform1f(u.loc, pv); continue }
+            if (u.type == GLES20.GL_FLOAT_VEC2 || u.type == GLES20.GL_FLOAT_VEC4) {
+                val r = sizeRefFor(nm, idx, orig, outs)
+                if (r != null) {
+                    if (u.type == GLES20.GL_FLOAT_VEC2) GLES20.glUniform2f(u.loc, r.w.toFloat(), r.h.toFloat())
+                    else GLES20.glUniform4f(u.loc, r.w.toFloat(), r.h.toFloat(), 1f / r.w, 1f / r.h)
+                    continue
+                }
+            }
             when (u.type) {
-                GLES20.GL_SAMPLER_2D -> GLES20.glUniform1i(u.loc, 0)
                 GLES20.GL_FLOAT_MAT4 -> GLES20.glUniformMatrix4fv(u.loc, 1, false, ident, 0)
                 GLES20.GL_INT -> when {
                     n.contains("framecount") || n.contains("frame_count") -> GLES20.glUniform1i(u.loc, frame)
@@ -152,6 +231,7 @@ class GbaRenderer(private val ctx: Context, private val emu: Emulator, private v
                 }
             }
         }
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
     }
 
     private fun drawQuad(vb: Int) {
@@ -184,25 +264,98 @@ class GbaRenderer(private val ctx: Context, private val emu: Emulator, private v
     }
 
     // ---------- carregamento de shaders ----------
+    private fun shaderDir() = File(ctx.filesDir, "shaders")
+
     private fun rebuild() {
         chain.filter { it !== passthrough }.forEach { GLES20.glDeleteProgram(it.prog) }
+        luts.values.forEach { GLES20.glDeleteTextures(1, intArrayOf(it.tex), 0) }; luts.clear()
         val list = ArrayList<Pass>()
-        for (k in shaderKeys.take(8)) {
-            try { list += loadPass(k) } catch (e: Exception) { report("Shader $k: ${e.message}") }
+        for (k in shaderKeys) {
+            if (list.size >= 16) break
+            val tmp = ArrayList<Pass>()
+            try {
+                if (k.endsWith(".glslp", true)) {
+                    val pre = parsePreset(k)
+                    for (l in pre.luts) { try { luts[l.name] = loadLut(l) } catch (e: Exception) { report("Textura ${l.name}: ${e.message}") } }
+                    for (s in pre.passes) tmp += loadPass(s, pre.params)
+                } else tmp += loadPass(PassSpec(k), emptyMap())
+                list += tmp
+            } catch (e: Exception) {
+                tmp.forEach { GLES20.glDeleteProgram(it.prog) } // preset incompleto não entra na cadeia
+                report("Shader $k: ${e.message}")
+            }
         }
-        chain = if (list.isEmpty()) listOfNotNull(passthrough) else list
+        chain = if (list.isEmpty()) listOfNotNull(passthrough) else list.take(16)
     }
 
-    private fun loadPass(key: String): Pass {
-        val dir = File(ctx.filesDir, "shaders")
-        return if (key.endsWith(".glsl", true)) {
-            val src = File(dir, key).readText()
-            build(prep(src, "VERTEX", false), prep(src, "FRAGMENT", true))
-        } else {
-            val vs = File(dir, key).readText()
-            val fs = File(dir, key.substring(0, key.length - 4) + ".fsh").readText()
-            build(prep(vs, null, false), prep(fs, null, true))
+    /** Lê um preset .glslp (chave = valor). Os arquivos citados são procurados pelo nome, na pasta de shaders importados. */
+    private fun parsePreset(key: String): Preset {
+        val kv = HashMap<String, String>()
+        File(shaderDir(), key).readLines().forEach { raw ->
+            val line = raw.trim()
+            if (line.isEmpty() || line.startsWith("#") || line.startsWith("//")) return@forEach
+            val i = line.indexOf('='); if (i <= 0) return@forEach
+            kv[line.substring(0, i).trim()] = line.substring(i + 1).trim().trim('"').trim()
         }
+        val n = kv["shaders"]?.toIntOrNull() ?: throw RuntimeException("preset sem a linha \"shaders = N\"")
+        fun bool(s: String?) = s?.let { it == "true" || it == "1" }
+        val passes = (0 until n.coerceAtMost(16)).map { i ->
+            val f = kv["shader$i"] ?: throw RuntimeException("falta shader$i no preset")
+            val st = kv["scale_type$i"]
+            val stx = kv["scale_type_x$i"] ?: st; val sty = kv["scale_type_y$i"] ?: st
+            val sc = kv["scale$i"]?.toFloatOrNull()
+            val dflt = if (i == n - 1) "viewport" else "source"
+            PassSpec(
+                file = f.substringAfterLast('/').substringAfterLast('\\'), alias = kv["alias$i"] ?: "",
+                typeX = stx ?: dflt, typeY = sty ?: dflt,
+                scaleX = kv["scale_x$i"]?.toFloatOrNull() ?: sc ?: 1f, scaleY = kv["scale_y$i"]?.toFloatOrNull() ?: sc ?: 1f,
+                linear = bool(kv["filter_linear$i"])
+            )
+        }
+        val lutSpecs = (kv["textures"] ?: "").split(';').map { it.trim() }.filter { it.isNotEmpty() && kv.containsKey(it) }.map { nm ->
+            LutSpec(nm, kv.getValue(nm).substringAfterLast('/').substringAfterLast('\\'), bool(kv["${nm}_linear"]) ?: true, kv["${nm}_wrap_mode"] ?: "clamp_to_edge")
+        }
+        val params = HashMap<String, Float>()
+        (kv["parameters"] ?: "").split(';').map { it.trim() }.filter { it.isNotEmpty() }.forEach { nm -> kv[nm]?.toFloatOrNull()?.let { params[nm] = it } }
+        return Preset(passes, lutSpecs, params)
+    }
+
+    private fun loadLut(l: LutSpec): Lut {
+        val f = File(shaderDir(), l.file)
+        if (!f.exists()) throw RuntimeException("arquivo ${l.file} não foi importado")
+        val bmp = BitmapFactory.decodeFile(f.path) ?: throw RuntimeException("imagem inválida")
+        val t = IntArray(1)
+        GLES20.glGenTextures(1, t, 0)
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, t[0])
+        GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bmp, 0)
+        val w = bmp.width; val h = bmp.height
+        bmp.recycle()
+        return Lut(t[0], w, h, l.linear, l.wrap)
+    }
+
+    private val paramRe = Regex("""#pragma\s+parameter\s+(\w+)\s+"[^"]*"\s+(-?[0-9.]+(?:[eE][-+]?[0-9]+)?)""")
+    private fun pragmaParams(src: String): Map<String, Float> =
+        paramRe.findAll(src).associate { it.groupValues[1] to (it.groupValues[2].toFloatOrNull() ?: 0f) }
+
+    private fun loadPass(s: PassSpec, preset: Map<String, Float>): Pass {
+        val dir = shaderDir()
+        val f = File(dir, s.file)
+        if (!f.exists()) throw RuntimeException("arquivo ${s.file} não foi importado")
+        val b: Built; val defaults: Map<String, Float>
+        if (s.file.endsWith(".glsl", true)) {
+            val src = f.readText()
+            defaults = pragmaParams(src)
+            b = build(prep(src, "VERTEX", false), prep(src, "FRAGMENT", true))
+        } else {
+            val vs = f.readText()
+            val fsFile = File(dir, s.file.substring(0, s.file.length - 4) + ".fsh")
+            if (!fsFile.exists()) throw RuntimeException("falta ${fsFile.name}")
+            val fs = fsFile.readText()
+            defaults = pragmaParams(vs) + pragmaParams(fs)
+            b = build(prep(vs, null, false), prep(fs, null, true))
+        }
+        return Pass(b.prog, b.uniforms, s, defaults + preset)
     }
 
     /** Injeta #define VERTEX/FRAGMENT, ajusta #version para ES e garante precisão no fragment. */
@@ -216,6 +369,7 @@ class GbaRenderer(private val ctx: Context, private val emu: Emulator, private v
             lines.removeAt(vi)
         }
         val sb = StringBuilder(header).append('\n')
+        sb.append("#define PARAMETER_UNIFORM 1\n")
         if (stage != null) sb.append("#define $stage 1\n")
         val body = lines.joinToString("\n")
         if (frag && !body.contains("precision")) sb.append("#ifdef GL_ES\nprecision mediump float;\n#endif\n")
@@ -238,7 +392,7 @@ class GbaRenderer(private val ctx: Context, private val emu: Emulator, private v
         if (ok[0] == 0) throw RuntimeException(GLES20.glGetProgramInfoLog(p).take(300))
     }
 
-    private fun build(vsSrc: String, fsSrc: String): Pass {
+    private fun build(vsSrc: String, fsSrc: String): Built {
         val vs = compile(GLES20.GL_VERTEX_SHADER, vsSrc)
         val fs = try { compile(GLES20.GL_FRAGMENT_SHADER, fsSrc) } catch (e: Exception) { GLES20.glDeleteShader(vs); throw e }
         val p = GLES20.glCreateProgram()
@@ -267,7 +421,7 @@ class GbaRenderer(private val ctx: Context, private val emu: Emulator, private v
             val loc = GLES20.glGetUniformLocation(p, name)
             if (loc >= 0) us += U(loc, name.substringBefore('['), tp[0])
         }
-        return Pass(p, us)
+        return Built(p, us)
     }
 
     companion object {

@@ -1,4 +1,4 @@
 No Termux, na pasta do projeto:
-  unzip -o ~/storage/downloads/gba-emu-patch-3.zip -d ~/GbaEmu
-  cd ~/GbaEmu && git add . && git commit -m "Fonte, cores RGB, 5 states, auto-save e auto-resume" && git push
+  unzip -o ~/storage/downloads/gba-emu-patch-4.zip -d ~/GbaEmu
+  cd ~/GbaEmu && git add . && git commit -m "Shaders multipass, menu tematico com icones, fonte em tudo" && git push
 Depois baixe o APK em Actions > Build APK > Artifacts.

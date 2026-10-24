@@ -80,7 +80,7 @@ class Prefs(c: Context) {
     fun availableShaders(): List<String> {
         val d = shaderDir()
         return (d.list()?.toList() ?: emptyList()).filter {
-            it.endsWith(".glsl", true) || (it.endsWith(".vsh", true) && File(d, it.substring(0, it.length - 4) + ".fsh").exists())
+            it.endsWith(".glsl", true) || it.endsWith(".glslp", true) || (it.endsWith(".vsh", true) && File(d, it.substring(0, it.length - 4) + ".fsh").exists())
         }.sorted()
     }
     /** Shader padrão (global): primeiro da lista ativa, ou "" se nenhum. */

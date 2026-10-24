@@ -4,13 +4,18 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import com.meu.gbaemu.ui.Dlg
 import com.meu.gbaemu.ui.KB_PROFILES
+import com.meu.gbaemu.ui.Row
+import com.meu.gbaemu.ui.T
 import com.meu.gbaemu.ui.SH_GLOBAL
 import com.meu.gbaemu.ui.SH_NONE
 import com.meu.gbaemu.ui.SettingsActivity
 import com.meu.gbaemu.ui.Prefs as UiPrefs
 import android.content.SharedPreferences
+import android.content.res.ColorStateList
 import android.graphics.BitmapFactory
+import android.graphics.drawable.ColorDrawable
 import android.graphics.Color
 import android.text.format.DateFormat
 import android.view.Gravity
@@ -192,7 +197,7 @@ class MainActivity : Activity() {
     private fun availableShaders(): List<String> {
         val d = shaderDir()
         return (d.list()?.toList() ?: emptyList()).filter {
-            it.endsWith(".glsl", true) || (it.endsWith(".vsh", true) && File(d, it.substring(0, it.length - 4) + ".fsh").exists())
+            it.endsWith(".glsl", true) || it.endsWith(".glslp", true) || (it.endsWith(".vsh", true) && File(d, it.substring(0, it.length - 4) + ".fsh").exists())
         }.sorted()
     }
 
@@ -210,48 +215,77 @@ class MainActivity : Activity() {
         var ok = 0; var skip = 0
         for (u in uris) {
             val nm = displayName(u).replace("/", "_"); val l = nm.lowercase()
-            if (l.endsWith(".glsl") || l.endsWith(".vsh") || l.endsWith(".fsh")) {
+            if (l.endsWith(".glsl") || l.endsWith(".glslp") || l.endsWith(".vsh") || l.endsWith(".fsh") || l.endsWith(".png") || l.endsWith(".jpg") || l.endsWith(".jpeg") || l.endsWith(".bmp")) {
                 contentResolver.openInputStream(u)?.use { i -> File(shaderDir(), nm).outputStream().use { o -> i.copyTo(o) } }; ok++
             } else skip++
         }
-        toast("$ok shader(s) importado(s)" + if (skip > 0) " • $skip ignorado(s) (só .glsl/.vsh/.fsh; presets .glslp não são suportados)" else "")
+        toast("$ok arquivo(s) importado(s)" + if (skip > 0) " • $skip ignorado(s) (aceito: .glsl, .glslp, .vsh/.fsh e imagens PNG)" else "")
+    }
+
+    private fun themed(d: AlertDialog) { d.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT)) }
+    private val THEME = AlertDialog.THEME_DEVICE_DEFAULT_DARK
+
+    /** Menu no tema do app (cores RGB e fonte importada): cada linha fecha o menu e executa a ação. */
+    private fun menuDlg(title: String, rows: List<Row>): AlertDialog {
+        lateinit var dlg: AlertDialog
+        val content = Dlg.content(this, title, rows) { dlg.dismiss() }
+        dlg = showDlgGet(AlertDialog.Builder(this, THEME).setView(content))
+        themed(dlg)
+        return dlg
+    }
+
+    private fun okCancel(dlg: () -> AlertDialog, onOk: () -> Unit): View = LinearLayout(this).apply {
+        addView(Dlg.button(this@MainActivity, "Cancelar", false) { dlg().dismiss() }, LinearLayout.LayoutParams(0, -2, 1f).apply { rightMargin = T.dp(this@MainActivity, 8) })
+        addView(Dlg.button(this@MainActivity, "OK", true) { onOk(); dlg().dismiss() }, LinearLayout.LayoutParams(0, -2, 1f))
     }
 
     private fun shadersDialog() {
         val av = availableShaders()
         if (av.isEmpty()) { toast("Nenhum shader importado ainda"); return }
         val on = enabledShaders().toMutableList()
-        val checked = BooleanArray(av.size) { av[it] in on }
-        showDlg(AlertDialog.Builder(this).setTitle("Shaders (ordem marcada = ordem das passadas)")
-            .setMultiChoiceItems(av.toTypedArray(), checked) { _, i, c -> if (c) { if (av[i] !in on) on.add(av[i]) } else on.remove(av[i]) }
-            .setPositiveButton("OK") { _, _ -> applyShaders(on) }.setNegativeButton("Cancelar", null))
+        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        fun render() {
+            list.removeAllViews()
+            for (k in av) {
+                val pos = on.indexOf(k)
+                Dlg.add(this, list, Dlg.rowView(this, if (k.endsWith(".glslp", true)) "layers" else "filter", k,
+                    if (pos >= 0) "passada ${pos + 1}" else null, pos >= 0) { if (k in on) on.remove(k) else on.add(k); render() })
+            }
+        }
+        render()
+        lateinit var dlg: AlertDialog
+        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; addView(list) }
+        Dlg.add(this, body, okCancel({ dlg }) { applyShaders(on) })
+        dlg = showDlgGet(AlertDialog.Builder(this, THEME).setView(Dlg.frame(this, "Shaders (ordem marcada = ordem das passadas)", body)))
+        themed(dlg)
     }
 
     private fun removeShaderDialog() {
         val av = availableShaders()
         if (av.isEmpty()) { toast("Nenhum shader importado ainda"); return }
-        showDlg(AlertDialog.Builder(this).setTitle("Remover shader").setItems(av.toTypedArray()) { _, i ->
-            val k = av[i]; val base = k.substring(0, k.length - 4)
-            File(shaderDir(), k).delete()
-            if (!k.endsWith(".glsl", true)) File(shaderDir(), "$base.fsh").delete()
-            applyShaders(enabledShaders())
+        menuDlg("Remover shader", av.map { k ->
+            Row("trash", k) {
+                File(shaderDir(), k).delete()
+                if (k.endsWith(".vsh", true)) File(shaderDir(), k.substring(0, k.length - 4) + ".fsh").delete()
+                applyShaders(enabledShaders())
+            }
         })
     }
 
     private fun shaderMenu() {
-        val items = arrayOf("Importar shaders (.glsl / .vsh+.fsh)", "Ativar / ordenar shaders", "Remover shader…",
-            "Escala interna das passadas: ${renderer.scale}x", "Filtro: " + if (renderer.linear) "bilinear" else "nearest", "Desativar todos")
-        showDlg(AlertDialog.Builder(this).setTitle("Shaders").setItems(items) { _, i ->
-            when (i) {
-                0 -> pick(2, true)
-                1 -> shadersDialog()
-                2 -> removeShaderDialog()
-                3 -> showDlg(AlertDialog.Builder(this).setTitle("Escala interna").setItems(Array(6) { "${it + 1}x" }) { _, s ->
-                    renderer.scale = s + 1; prefs.edit().putInt("scale", s + 1).apply(); glView.requestRender() })
-                4 -> { renderer.linear = !renderer.linear; prefs.edit().putBoolean("linear", renderer.linear).apply(); glView.requestRender() }
-                5 -> applyShaders(emptyList())
-            }
-        })
+        menuDlg("Shaders", listOf(
+            Row("import", "Importar shaders", sub = ".glsl, .glslp (multipass), .vsh/.fsh e PNGs dos presets") { pick(2, true) },
+            Row("layers", "Ativar e ordenar shaders") { shadersDialog() },
+            Row("trash", "Remover shader") { removeShaderDialog() },
+            Row("scale", "Escala interna das passadas", sub = "${renderer.scale}x") {
+                menuDlg("Escala interna", (1..6).map { s ->
+                    Row(null, "${s}x", checked = renderer.scale == s) { renderer.scale = s; prefs.edit().putInt("scale", s).apply(); glView.requestRender() }
+                })
+            },
+            Row("filter", "Filtro", sub = if (renderer.linear) "bilinear" else "nearest") {
+                renderer.linear = !renderer.linear; prefs.edit().putBoolean("linear", renderer.linear).apply(); glView.requestRender()
+            },
+            Row("power", "Desativar todos") { applyShaders(emptyList()) }))
     }
 
     // ---------- controles ----------
@@ -269,51 +303,63 @@ class MainActivity : Activity() {
     }
 
     private fun opacityDialog() {
-        val sb = SeekBar(this).apply { max = 80; progress = ((controls.opacity * 100).toInt() - 20).coerceIn(0, 80); setPadding(48, 48, 48, 0) }
-        showDlg(AlertDialog.Builder(this).setTitle("Opacidade dos botões").setView(sb)
-            .setPositiveButton("OK") { _, _ ->
-                controls.opacity = (sb.progress + 20) / 100f
-                prefs.edit().putFloat("opacity", controls.opacity).apply(); controls.invalidate()
-            }.setNegativeButton("Cancelar", null))
+        val lb = T.text(this, "", 14f, T.MUT)
+        val sb = SeekBar(this).apply {
+            max = 80; progress = ((controls.opacity * 100).toInt() - 20).coerceIn(0, 80)
+            progressTintList = ColorStateList.valueOf(T.GOLD); thumbTintList = ColorStateList.valueOf(T.GOLD)
+        }
+        fun upd() { lb.text = "Opacidade: ${sb.progress + 20}%" }
+        upd()
+        sb.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(s: SeekBar?, v: Int, u: Boolean) { upd() }
+            override fun onStartTrackingTouch(s: SeekBar?) {}
+            override fun onStopTrackingTouch(s: SeekBar?) {}
+        })
+        lateinit var dlg: AlertDialog
+        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; addView(lb); addView(sb) }
+        Dlg.add(this, body, okCancel({ dlg }) {
+            controls.opacity = (sb.progress + 20) / 100f
+            prefs.edit().putFloat("opacity", controls.opacity).apply(); controls.invalidate()
+        })
+        dlg = showDlgGet(AlertDialog.Builder(this, THEME).setView(Dlg.frame(this, "Opacidade dos botões", body)))
+        themed(dlg)
     }
 
     private fun controlsMenu() {
-        val items = arrayOf("Direcional: " + if (controls.useStick) "analógico" else "D-pad", "Editar layout (arrastar / pinça)", "Resetar posições",
-            "Importar PNGs (a, b, l, r, start, select, dpad, stick_base, stick_knob, menu)", "Restaurar PNGs padrão", "Opacidade…",
-            "Vibração: " + if (controls.haptic) "ligada" else "desligada")
-        showDlg(AlertDialog.Builder(this).setTitle("Controles").setItems(items) { _, i ->
-            when (i) {
-                0 -> { controls.useStick = !controls.useStick; prefs.edit().putBoolean("stick", controls.useStick).apply() }
-                1 -> controls.editMode = true
-                2 -> controls.resetLayout()
-                3 -> pick(3, true)
-                4 -> { File(filesDir, "skin").listFiles()?.forEach { it.delete() }; controls.reloadSkin() }
-                5 -> opacityDialog()
-                6 -> { controls.haptic = !controls.haptic; prefs.edit().putBoolean("haptic", controls.haptic).apply() }
-            }
-        })
+        menuDlg("Controles", listOf(
+            Row("dpad", "Direcional", sub = if (controls.useStick) "analógico" else "D-pad") {
+                controls.useStick = !controls.useStick; prefs.edit().putBoolean("stick", controls.useStick).apply()
+            },
+            Row("pencil", "Editar layout", sub = "arrastar e pinça") { controls.editMode = true },
+            Row("restart", "Resetar posições") { controls.resetLayout() },
+            Row("image", "Importar PNGs dos botões", sub = "a, b, l, r, start, select, dpad, stick_base, stick_knob, menu") { pick(3, true) },
+            Row("trash", "Restaurar PNGs padrão") { File(filesDir, "skin").listFiles()?.forEach { it.delete() }; controls.reloadSkin() },
+            Row("drop", "Opacidade") { opacityDialog() },
+            Row("vibrate", "Vibração", sub = if (controls.haptic) "ligada" else "desligada") {
+                controls.haptic = !controls.haptic; prefs.edit().putBoolean("haptic", controls.haptic).apply()
+            }))
     }
 
     // ---------- menu ----------
     private fun stateDialog(save: Boolean) {
-        val d = resources.displayMetrics.density
-        fun px(v: Int) = (v * d).toInt()
-        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(px(12), px(8), px(12), px(8)) }
+        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         lateinit var dlg: AlertDialog
         for (s in (if (save) (1..5).toList() else (0..5).toList())) { // slot 0 = auto-save (só carregar)
             val sf = emu.stateFile(s); val tf = emu.thumbFile(s); val has = sf.exists()
             val img = ImageView(this).apply {
-                scaleType = ImageView.ScaleType.CENTER_CROP; setBackgroundColor(0xFF1A1A1A.toInt())
+                scaleType = ImageView.ScaleType.CENTER_CROP; setBackgroundColor(T.BG)
                 if (has && tf.exists()) BitmapFactory.decodeFile(tf.path)?.let { setImageBitmap(it) }
             }
-            val label = TextView(this).apply {
-                text = (if (s == 0) "Auto-save" else "Slot $s") + "\n" + (if (has) DateFormat.format("dd/MM  HH:mm", sf.lastModified()).toString() else "vazio")
-                setTextColor(Color.WHITE); textSize = 15f; setPadding(px(14), 0, 0, 0)
+            val info = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL; setPadding(T.dp(context, 14), 0, 0, 0)
+                addView(T.text(context, if (s == 0) "Auto-save" else "Slot $s", 15f, T.TX, true))
+                addView(T.text(context, if (has) DateFormat.format("dd/MM  HH:mm", sf.lastModified()).toString() else "vazio", 12f, T.MUT))
             }
-            col.addView(LinearLayout(this).apply {
-                gravity = Gravity.CENTER_VERTICAL; setPadding(0, px(6), 0, px(6))
-                addView(img, LinearLayout.LayoutParams(px(120), px(80)))
-                addView(label, LinearLayout.LayoutParams(0, -2, 1f))
+            Dlg.add(this, body, LinearLayout(this).apply {
+                gravity = Gravity.CENTER_VERTICAL; background = T.box(context, T.CARD, T.LINE, 12)
+                setPadding(T.dp(context, 8), T.dp(context, 8), T.dp(context, 8), T.dp(context, 8))
+                addView(img, LinearLayout.LayoutParams(T.dp(context, 120), T.dp(context, 80)))
+                addView(info, LinearLayout.LayoutParams(0, -2, 1f))
                 setOnClickListener {
                     dlg.dismiss()
                     val ok = if (save) emu.saveState(s) else emu.loadState(s)
@@ -321,27 +367,21 @@ class MainActivity : Activity() {
                 }
             })
         }
-        dlg = showDlgGet(AlertDialog.Builder(this, AlertDialog.THEME_DEVICE_DEFAULT_DARK)
-            .setTitle(if (save) "Salvar estado (5 slots)" else "Carregar estado")
-            .setView(ScrollView(this).apply { addView(col) }))
+        dlg = showDlgGet(AlertDialog.Builder(this, THEME).setView(Dlg.frame(this, if (save) "Salvar estado" else "Carregar estado", body)))
+        themed(dlg)
     }
 
     private fun showMenu() {
-        val items = arrayOf("Abrir ROM", "Shaders…", "Controles…", "Salvar estado…", "Carregar estado…",
-            "Acelerar (${emu.ffMul}x): " + if (emu.fast) "ligado" else "desligado", "Reiniciar jogo", "Configurações…", "Voltar à biblioteca")
-        showDlg(AlertDialog.Builder(this).setTitle("Menu").setItems(items) { _, i ->
-            when (i) {
-                0 -> pick(1, false)
-                1 -> shaderMenu()
-                2 -> controlsMenu()
-                3 -> stateDialog(true)
-                4 -> stateDialog(false)
-                5 -> emu.fast = !emu.fast
-                6 -> emu.reset()
-                7 -> startActivity(Intent(this, SettingsActivity::class.java))
-                8 -> finish()
-            }
-        })
+        menuDlg("Menu", listOf(
+            Row("folder", "Abrir ROM") { pick(1, false) },
+            Row("layers", "Shaders") { shaderMenu() },
+            Row("pad", "Controles") { controlsMenu() },
+            Row("save", "Salvar estado") { stateDialog(true) },
+            Row("load", "Carregar estado") { stateDialog(false) },
+            Row("ff", "Acelerar (${emu.ffMul}x)", sub = if (emu.fast) "ligado" else "desligado", checked = emu.fast) { emu.fast = !emu.fast },
+            Row("restart", "Reiniciar jogo") { emu.reset() },
+            Row("gear", "Configurações") { startActivity(Intent(this, SettingsActivity::class.java)) },
+            Row("home", "Voltar à biblioteca") { finish() }))
     }
 
     // ---------- gamepad físico ----------

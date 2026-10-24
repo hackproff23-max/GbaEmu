@@ -28,10 +28,15 @@ class SettingsActivity : Activity() {
             orientation = LinearLayout.VERTICAL; setBackgroundColor(T.BG)
             addView(T.header(context, title, null)); addView(body, LinearLayout.LayoutParams(-1, 0, 1f))
         })
+        editColor = (b?.getInt("ec") ?: 0).coerceIn(0, COLOR_KEYS.size - 1)
         show(b?.getString("page") ?: "menu")
+        b?.getInt("sy")?.takeIf { it > 0 }?.let { y -> scroll?.post { scroll?.scrollTo(0, y) } }
     }
 
-    override fun onSaveInstanceState(o: Bundle) { super.onSaveInstanceState(o); o.putString("page", page) }
+    override fun onSaveInstanceState(o: Bundle) {
+        super.onSaveInstanceState(o)
+        o.putString("page", page); o.putInt("ec", editColor); o.putInt("sy", scroll?.scrollY ?: 0)
+    }
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() { if (page == "colors") show("adv") else if (page != "menu") show("menu") else super.onBackPressed() }
@@ -41,11 +46,12 @@ class SettingsActivity : Activity() {
         title.text = mapOf("menu" to "Configurações", "video" to "Vídeo", "audio" to "Áudio", "ctrl" to "Controle", "shaders" to "Shaders", "adv" to "Avançado", "colors" to "Cores do app")[pg]
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(T.dp(context, 16), 0, T.dp(context, 16), T.dp(context, 30)) }
         when (pg) { "menu" -> menu(col); "video" -> video(col); "audio" -> audio(col); "ctrl" -> ctrl(col); "shaders" -> shaders(col); "adv" -> adv(col); "colors" -> colorsPage(col) }
-        body.addView(ScrollView(this).apply { addView(col) })
+        scroll = ScrollView(this).apply { addView(col) }
+        body.addView(scroll)
     }
 
     private fun btn(text: String, solid: Boolean, click: () -> Unit) = T.text(this, text, 15f, if (solid) T.BG else T.GOLD, true).apply {
-        gravity = Gravity.CENTER; background = T.box(context, if (solid) T.GOLD else 0xFF0C0C0C.toInt(), T.GOLD)
+        gravity = Gravity.CENTER; background = T.box(context, if (solid) T.GOLD else T.CARD, T.GOLD)
         setPadding(0, T.dp(context, 12), 0, T.dp(context, 12)); setOnClickListener { click() }
     }.also { it.layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = T.dp(this@SettingsActivity, 12) } }
 
@@ -122,8 +128,8 @@ class SettingsActivity : Activity() {
     }
 
     private fun shaders(col: LinearLayout) {
-        col.addView(T.note(this, "Shader padrão para jogos sem escolha própria. Cada jogo pode ter a sua na Biblioteca."))
-        col.addView(btn("Importar shaders (.glsl / .vsh + .fsh)", true) {
+        col.addView(T.note(this, "Shader padrão para jogos sem escolha própria. Cada jogo pode ter a sua na Biblioteca. Aceita .glsl, .vsh/.fsh e presets multipass .glslp: para um preset, selecione de uma vez o .glslp, todos os .glsl que ele usa e os PNGs (texturas) dele."))
+        col.addView(btn("Importar shaders", true) {
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                 addCategory(Intent.CATEGORY_OPENABLE); type = "*/*"; putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
             }, 2)
@@ -157,7 +163,7 @@ class SettingsActivity : Activity() {
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); type = "*/*" }, 3)
         })
         if (p.hasFont()) col.addView(btn("Voltar à fonte padrão", false) { p.clearFont(); recreate() })
-        col.addView(btn("Cores do app (RGB)…", false) { show("colors") })
+        col.addView(btn("Cores do app (RGB)", false) { show("colors") })
         col.addView(T.h(this, "Biblioteca"))
         col.addView(btn("Limpar lista de jogos", false) {
             AlertDialog.Builder(this, AlertDialog.THEME_DEVICE_DEFAULT_DARK).setTitle("Limpar a lista?").setMessage("Os arquivos e os saves não são apagados.")
@@ -185,11 +191,11 @@ class SettingsActivity : Activity() {
         var ok = 0; var skip = 0
         for (u in uris) {
             val nm = displayName(u).replace("/", "_"); val l = nm.lowercase()
-            if (l.endsWith(".glsl") || l.endsWith(".vsh") || l.endsWith(".fsh")) {
+            if (l.endsWith(".glsl") || l.endsWith(".glslp") || l.endsWith(".vsh") || l.endsWith(".fsh") || l.endsWith(".png") || l.endsWith(".jpg") || l.endsWith(".jpeg") || l.endsWith(".bmp")) {
                 contentResolver.openInputStream(u)?.use { i -> File(p.shaderDir(), nm).outputStream().use { o -> i.copyTo(o) } }; ok++
             } else skip++
         }
-        Toast.makeText(this, "$ok shader(s) importado(s)" + if (skip > 0) " • $skip ignorado(s) (só .glsl/.vsh/.fsh)" else "", Toast.LENGTH_LONG).show()
+        Toast.makeText(this, "$ok arquivo(s) importado(s)" + if (skip > 0) " • $skip ignorado(s) (aceito: .glsl, .glslp, .vsh/.fsh e imagens PNG)" else "", Toast.LENGTH_LONG).show()
         show("shaders")
     }
 
@@ -203,6 +209,7 @@ class SettingsActivity : Activity() {
     }
 
     private var editColor = 0
+    private var scroll: ScrollView? = null
 
     private fun colorsPage(col: LinearLayout) {
         col.addView(T.note(this, "Escolha qual cor mudar e ajuste R, G e B (0 a 255). Ao soltar o controle, o app inteiro recarrega com a nova cor."))

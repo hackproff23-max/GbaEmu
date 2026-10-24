@@ -2,6 +2,7 @@ package com.meu.gbaemu.ui
 
 import android.content.Context
 import android.content.res.ColorStateList
+import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
@@ -19,6 +20,7 @@ object T {
         "GOLD2" to 0xFFF5D77A.toInt(), "TX" to 0xFFF3EAD0.toInt(), "MUT" to 0xFF9A8A5A.toInt())
     fun get(k: String): Int = when (k) { "BG" -> BG; "CARD" -> CARD; "LINE" -> LINE; "GOLD" -> GOLD; "GOLD2" -> GOLD2; "TX" -> TX; else -> MUT }
     fun set(k: String, v: Int) { when (k) { "BG" -> BG = v; "CARD" -> CARD = v; "LINE" -> LINE = v; "GOLD" -> GOLD = v; "GOLD2" -> GOLD2 = v; "TX" -> TX = v; else -> MUT = v } }
+    fun shade(c: Int, f: Float): Int = Color.rgb((Color.red(c) * f).toInt(), (Color.green(c) * f).toInt(), (Color.blue(c) * f).toInt())
     fun sig(): Int = listOf(BG, CARD, LINE, GOLD, GOLD2, TX, MUT, font?.hashCode() ?: 0).hashCode()
 
     fun dp(c: Context, v: Int) = (v * c.resources.displayMetrics.density).toInt()
@@ -80,7 +82,7 @@ object T {
         gravity = Gravity.CENTER_VERTICAL; setPadding(dp(c, 16), dp(c, 12), dp(c, 16), dp(c, 12))
         val logo = text(c, "GBA", 13f, BG, true).apply {
             gravity = Gravity.CENTER
-            background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(GOLD2, GOLD, 0xFF8A6D17.toInt())).apply { cornerRadius = dp(c, 10).toFloat() }
+            background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(GOLD2, GOLD, shade(GOLD, 0.65f))).apply { cornerRadius = dp(c, 10).toFloat() }
         }
         addView(logo, LinearLayout.LayoutParams(dp(c, 38), dp(c, 38)))
         addView(title, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(c, 10) })

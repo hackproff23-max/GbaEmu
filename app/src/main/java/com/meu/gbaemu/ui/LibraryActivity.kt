@@ -6,6 +6,8 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
@@ -29,13 +31,13 @@ class LibraryActivity : Activity() {
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(T.BG) }
         val gear = ImageButton(this).apply {
             setImageResource(com.meu.gbaemu.R.drawable.ic_gear)
-            background = T.box(this@LibraryActivity, 0xFF0B0B0B.toInt(), T.GOLD); contentDescription = "Configurações"
+            background = T.box(this@LibraryActivity, T.CARD, T.GOLD); contentDescription = "Configurações"
             setOnClickListener { startActivity(Intent(this@LibraryActivity, SettingsActivity::class.java)) }
         }
         root.addView(T.header(this, T.text(this, "Biblioteca", 18f, T.GOLD2, true), gear))
         val search = EditText(this).apply {
             hint = "Buscar jogo"; setHintTextColor(T.MUT); T.font?.let { typeface = it }; setTextColor(T.TX); setSingleLine()
-            background = T.box(this@LibraryActivity, 0xFF0C0C0C.toInt(), T.LINE)
+            background = T.box(this@LibraryActivity, T.CARD, T.LINE)
             setPadding(T.dp(context, 14), T.dp(context, 10), T.dp(context, 14), T.dp(context, 10))
             addTextChangedListener(object : TextWatcher {
                 override fun afterTextChanged(s: Editable?) { q = s.toString(); fill() }
@@ -110,11 +112,11 @@ class LibraryActivity : Activity() {
     }
 
     private fun options(g: Game) {
-        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(0xFF0A0A0A.toInt()); setPadding(T.dp(context, 18), T.dp(context, 16), T.dp(context, 18), T.dp(context, 16)) }
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = T.box(context, T.BG, T.GOLD, 18); setPadding(T.dp(context, 18), T.dp(context, 16), T.dp(context, 18), T.dp(context, 16)) }
         lateinit var dlg: AlertDialog
         fun again() { dlg.dismiss(); options(g); fill() }
         fun rowBtn(label: String, click: () -> Unit) = col.addView(
-            T.text(this, label, 15f, T.GOLD2).apply { background = T.box(context, 0xFF0C0C0C.toInt(), T.GOLD); setPadding(T.dp(context, 14), T.dp(context, 12), T.dp(context, 14), T.dp(context, 12)); setOnClickListener { click() } },
+            T.text(this, label, 15f, T.GOLD2).apply { background = T.box(context, T.CARD, T.GOLD); setPadding(T.dp(context, 14), T.dp(context, 12), T.dp(context, 14), T.dp(context, 12)); setOnClickListener { click() } },
             LinearLayout.LayoutParams(-1, -2).apply { topMargin = T.dp(this@LibraryActivity, 10) })
         /** Opção por jogo: 1ª linha = "Padrão" (apaga a escolha do jogo e volta a valer a das configurações). */
         fun choice(title: String, key: String, labels: List<String>, values: List<String>) {
@@ -151,7 +153,7 @@ class LibraryActivity : Activity() {
         col.addView(T.h(this, "Biblioteca"))
         rowBtn(if (p.isFav(g.id)) "★ Remover dos favoritos" else "☆ Favoritar") { p.setFav(g.id, !p.isFav(g.id)); dlg.dismiss(); fill() }
         rowBtn("Remover da lista") { p.removeGame(g.id); dlg.dismiss(); fill() }
-        dlg = AlertDialog.Builder(this, AlertDialog.THEME_DEVICE_DEFAULT_DARK).setView(ScrollView(this).apply { addView(col) }).create(); dlg.show()
+        dlg = AlertDialog.Builder(this, AlertDialog.THEME_DEVICE_DEFAULT_DARK).setView(ScrollView(this).apply { addView(col) }).create(); dlg.show(); dlg.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
     }
 
     private fun pickCover(g: Game) {
@@ -181,9 +183,12 @@ class LibraryActivity : Activity() {
         }
     }
 
-    private fun pick(title: String, labels: List<String>, cur: Int, done: (Int) -> Unit) =
-        AlertDialog.Builder(this, AlertDialog.THEME_DEVICE_DEFAULT_DARK).setTitle(title)
-            .setSingleChoiceItems(labels.toTypedArray(), cur) { d, i -> d.dismiss(); done(i) }.show()
+    private fun pick(title: String, labels: List<String>, cur: Int, done: (Int) -> Unit) {
+        lateinit var dlg: AlertDialog
+        val rows = labels.mapIndexed { i, t -> Row(null, t, checked = i == cur) { done(i) } }
+        dlg = AlertDialog.Builder(this, AlertDialog.THEME_DEVICE_DEFAULT_DARK).setView(Dlg.content(this, title, rows) { dlg.dismiss() }).create()
+        dlg.show(); dlg.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+    }
 
     private fun play(g: Game) {
         p.touch(g.id)

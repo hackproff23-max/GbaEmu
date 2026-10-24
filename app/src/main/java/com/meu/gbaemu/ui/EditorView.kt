@@ -9,7 +9,7 @@ import android.view.View
  *  Mesma geometria do GbaRenderer: largura = s * palco, posição = fração do espaço livre. */
 class EditorView(c: Context, var px: Float, var py: Float, var s: Float, var ar: Float) : View(c) {
     var onChange: (() -> Unit)? = null
-    private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF2A2208.toInt() }
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = T.LINE }
     private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = T.dp(c, 2).toFloat(); color = T.GOLD }
     private val txt = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = T.GOLD2; textAlign = Paint.Align.CENTER; textSize = T.dp(c, 13).toFloat(); typeface = Typeface.DEFAULT_BOLD }
     private var dx = 0f; private var dy = 0f; private var drag = false
@@ -22,7 +22,7 @@ class EditorView(c: Context, var px: Float, var py: Float, var s: Float, var ar:
     }
 
     override fun onDraw(cv: Canvas) {
-        cv.drawColor(0xFF050505.toInt())
+        cv.drawColor(T.BG)
         cv.drawRect(1f, 1f, width - 1f, height - 1f, line.apply { alpha = 90 }); line.alpha = 255
         val r = rect(); cv.drawRect(r, fill); cv.drawRect(r, line)
         cv.drawText("GBA", r.centerX(), r.centerY() + txt.textSize / 3, txt)
