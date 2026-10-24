@@ -57,6 +57,10 @@ class LibraryActivity : Activity() {
             orientation = LinearLayout.VERTICAL; setPadding(T.dp(context, 16), 0, T.dp(context, 16), T.dp(context, 24))
             addView(search); addView(chipHost); addView(T.note(context, "Toque para jogar · segure um jogo para configurar e trocar a capa")); addView(list)
             addView(add, LinearLayout.LayoutParams(-1, -2).apply { topMargin = T.dp(this@LibraryActivity, 12) })
+            addView(T.text(context, "⬇  Baixar capas dos jogos (online, opcional)", 14f, T.GOLD, true).apply {
+                gravity = Gravity.CENTER; background = T.box(context, T.CARD, T.GOLD)
+                setPadding(0, T.dp(context, 12), 0, T.dp(context, 12)); setOnClickListener { downloadCovers(p.games(), false) }
+            }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = T.dp(this@LibraryActivity, 10) })
         }
         root.addView(ScrollView(this).apply { addView(body) })
         setContentView(root)
@@ -116,7 +120,8 @@ class LibraryActivity : Activity() {
         val bmp = coverBitmap(g.id)
         val cov: View = if (bmp != null) ImageView(this).apply { setImageBitmap(bmp); scaleType = ImageView.ScaleType.CENTER_CROP }
         else T.text(this, g.name.take(2).uppercase(), 30f, T.BG, true).apply { gravity = Gravity.CENTER; setBackgroundColor(T.GOLD) }
-        val box = FrameLayout(this).apply {
+        // SquareFrame: a altura acompanha a largura, então a capa fica sempre quadrada perfeita
+        val box = SquareFrame(this).apply {
             addView(cov, FrameLayout.LayoutParams(-1, -1))
             if (p.isFav(g.id)) addView(T.text(context, "★", 18f, T.GOLD2, true).apply {
                 setPadding(T.dp(context, 8), T.dp(context, 2), T.dp(context, 8), T.dp(context, 2)); setBackgroundColor(0x99000000.toInt())
@@ -124,7 +129,8 @@ class LibraryActivity : Activity() {
         }
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; background = T.box(context, T.CARD, T.LINE, 14)
-            addView(box, LinearLayout.LayoutParams(-1, T.dp(context, 110)))
+            clipToOutline = true; outlineProvider = android.view.ViewOutlineProvider.BACKGROUND // cantos arredondados também na imagem
+            addView(box, LinearLayout.LayoutParams(-1, -2))
             addView(T.text(context, g.name, 14f, T.TX, true).apply { maxLines = 2; setPadding(T.dp(context, 10), T.dp(context, 8), T.dp(context, 10), 0) })
             addView(T.note(context, "${shLabel(p.shaderFor(g.id))} · ${p.kbFor(g.id)}").apply { setPadding(T.dp(context, 10), 0, T.dp(context, 10), T.dp(context, 8)) })
             setOnClickListener { play(g) }
@@ -133,48 +139,79 @@ class LibraryActivity : Activity() {
     }
 
     private fun options(g: Game) {
-        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = T.box(context, T.BG, T.GOLD, 18); setPadding(T.dp(context, 18), T.dp(context, 16), T.dp(context, 18), T.dp(context, 16)) }
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; background = T.box(context, T.BG, T.GOLD, 18)
+            setPadding(T.dp(context, 16), T.dp(context, 16), T.dp(context, 16), T.dp(context, 16))
+            minimumWidth = minOf((resources.displayMetrics.widthPixels * 0.9f).toInt(), T.dp(context, 560))
+        }
         lateinit var dlg: AlertDialog
+        val cols = Dlg.cols(this)
         fun again() { dlg.dismiss(); options(g); fill() }
-        fun rowBtn(label: String, click: () -> Unit) = col.addView(
-            T.text(this, label, 15f, T.GOLD2).apply { background = T.box(context, T.CARD, T.GOLD); setPadding(T.dp(context, 14), T.dp(context, 12), T.dp(context, 14), T.dp(context, 12)); setOnClickListener { click() } },
-            LinearLayout.LayoutParams(-1, -2).apply { topMargin = T.dp(this@LibraryActivity, 10) })
+        fun section(title: String, rows: List<Row>) {
+            col.addView(T.h(this, title))
+            col.addView(Dlg.grid(this, rows, cols) { dlg.dismiss() })
+        }
         /** Opção por jogo: 1ª linha = "Padrão" (apaga a escolha do jogo e volta a valer a das configurações). */
-        fun choice(title: String, key: String, labels: List<String>, values: List<String>) {
+        fun choice(icon: String, title: String, key: String, labels: List<String>, values: List<String>): Row {
             val cur = p.gameVal(g.id, key)
             val shown = cur?.let { labels.getOrNull(values.indexOf(it)) } ?: "Padrão"
-            rowBtn("$title: $shown") {
+            return Row(icon, title, shown) {
                 pick(title, listOf("Padrão (das configurações)") + labels, if (cur == null) 0 else values.indexOf(cur) + 1) { i ->
                     p.setG(g.id, key, if (i == 0) null else values[i - 1]); again()
                 }
             }
         }
-        col.addView(T.text(this, g.name, 18f, T.GOLD2, true))
+        val hasCover = p.coverFile(g.id).exists()
+        col.addView(Dlg.coverHeader(this, g.name, coverBitmap(g.id)))
         col.addView(T.text(this, "▶  JOGAR", 16f, T.BG, true).apply {
             gravity = Gravity.CENTER; background = T.box(context, T.GOLD, T.GOLD); setPadding(0, T.dp(context, 13), 0, T.dp(context, 13))
             setOnClickListener { dlg.dismiss(); play(g) }
         }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = T.dp(this@LibraryActivity, 12) })
-        col.addView(T.h(this, "Capa"))
-        rowBtn(if (p.coverFile(g.id).exists()) "Trocar imagem da capa" else "Escolher imagem da capa") { dlg.dismiss(); pickCover(g) }
-        if (p.coverFile(g.id).exists()) rowBtn("Remover capa") { p.coverFile(g.id).delete(); covers.clear(); again() }
-        col.addView(T.h(this, "Configuração só deste jogo"))
-        rowBtn("Shader deste jogo: ${shLabel(p.shaderFor(g.id))}") {
-            val av = p.availableShaders(); val keys = listOf(SH_GLOBAL, SH_NONE) + av
-            pick("Shader deste jogo", listOf("Shader padrão (das configurações)", "Sem shader") + av, keys.indexOf(p.shaderFor(g.id))) { p.setShader(g.id, keys[it]); again() }
-        }
-        rowBtn("Teclado deste jogo: ${p.kbFor(g.id)}") {
-            pick("Perfil de teclado", KB_PROFILES, KB_PROFILES.indexOf(p.kbFor(g.id))) { p.setKb(g.id, KB_PROFILES[it]); again() }
-        }
-        choice("Orientação do jogo", "orient", listOf("Automático", "Retrato", "Paisagem"), listOf("auto", "retrato", "paisagem"))
+
+        section("Capa", listOfNotNull(
+            Row("image", if (hasCover) "Trocar capa" else "Escolher capa", "da galeria") { pickCover(g) },
+            Row("import", "Baixar capa", "online, opcional") { downloadCovers(listOf(g), true) },
+            if (hasCover) Row("trash", "Remover capa") { p.coverFile(g.id).delete(); covers.clear(); again() } else null))
+
         val ratios = listOf("Original 3:2", "4:3", "16:9", "Tela cheia")
-        choice("Proporção da tela", "ratio", ratios, ratios)
-        choice("Fast-forward", "ff", FF_STEPS, FF_STEPS)
-        choice("Volume", "vol", listOf("0% (mudo)", "25%", "50%", "75%", "100%"), listOf("0", "25", "50", "75", "100"))
-        rowBtn("Restaurar configurações deste jogo") { p.resetGame(g.id); again() }
-        col.addView(T.h(this, "Biblioteca"))
-        rowBtn(if (p.isFav(g.id)) "★ Remover dos favoritos" else "☆ Favoritar") { p.setFav(g.id, !p.isFav(g.id)); dlg.dismiss(); fill() }
-        rowBtn("Remover da lista") { p.removeGame(g.id); dlg.dismiss(); fill() }
+        val av = p.availableShaders(); val shKeys = listOf(SH_GLOBAL, SH_NONE) + av
+        section("Configuração só deste jogo", listOf(
+            Row("filter", "Shader", shLabel(p.shaderFor(g.id))) {
+                pick("Shader deste jogo", listOf("Shader padrão (das configurações)", "Sem shader") + av, shKeys.indexOf(p.shaderFor(g.id))) { p.setShader(g.id, shKeys[it]); again() }
+            },
+            Row("pad", "Teclado", p.kbFor(g.id)) {
+                pick("Perfil de teclado", KB_PROFILES, KB_PROFILES.indexOf(p.kbFor(g.id))) { p.setKb(g.id, KB_PROFILES[it]); again() }
+            },
+            choice("scale", "Orientação", "orient", listOf("Automático", "Retrato", "Paisagem"), listOf("auto", "retrato", "paisagem")),
+            choice("scale", "Proporção", "ratio", ratios, ratios),
+            choice("ff", "Fast-forward", "ff", FF_STEPS, FF_STEPS),
+            choice("vibrate", "Volume", "vol", listOf("0% (mudo)", "25%", "50%", "75%", "100%"), listOf("0", "25", "50", "75", "100")),
+            Row("restart", "Restaurar", "padrões do jogo") { p.resetGame(g.id); again() }))
+
+        section("Biblioteca", listOf(
+            Row("check", if (p.isFav(g.id)) "Tirar dos favoritos" else "Favoritar") { p.setFav(g.id, !p.isFav(g.id)); fill() },
+            Row("trash", "Remover da lista") { p.removeGame(g.id); fill() }))
+
         dlg = AlertDialog.Builder(this, AlertDialog.THEME_DEVICE_DEFAULT_DARK).setView(ScrollView(this).apply { addView(col) }).create(); dlg.show(); dlg.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+    }
+
+    /** Baixa capas online (opcional). Identifica o jogo pelo CRC da ROM, então não depende do nome do arquivo. */
+    private fun downloadCovers(list: List<Game>, force: Boolean) {
+        val todo = if (force) list else list.filter { !p.coverFile(it.id).exists() }
+        if (todo.isEmpty()) { Toast.makeText(this, "Todos os jogos já têm capa", Toast.LENGTH_SHORT).show(); return }
+        val pd = ProgressDlg(this, "Baixando capas")
+        Thread {
+            var ok = 0; var fail = 0
+            for ((i, g) in todo.withIndex()) {
+                if (pd.cancelled) break
+                pd.set("${i + 1} de ${todo.size}\n${g.name}")
+                if (try { Covers.fetch(this, p, g) } catch (e: Throwable) { false }) ok++ else fail++
+            }
+            Net.main.post {
+                pd.close(); covers.clear(); fill()
+                Toast.makeText(this, if (ok == 0 && fail > 0) "Não consegui baixar (sem internet ou jogo não encontrado)" else "$ok capa(s) baixada(s)" + if (fail > 0) " · $fail não encontrada(s)" else "", Toast.LENGTH_LONG).show()
+            }
+        }.start()
     }
 
     private fun pickCover(g: Game) {
@@ -192,11 +229,7 @@ class LibraryActivity : Activity() {
             while (o.outWidth / ss > 1200 || o.outHeight / ss > 1200) ss *= 2
             val src = contentResolver.openInputStream(u)?.use { BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = ss }) }
                 ?: throw Exception("imagem inválida")
-            val k = minOf(1f, 640f / maxOf(src.width, src.height))
-            val w = (src.width * k).toInt().coerceAtLeast(1); val h = (src.height * k).toInt().coerceAtLeast(1)
-            val flat = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-            Canvas(flat).apply { drawColor(0xFF0A0A0A.toInt()); drawBitmap(Bitmap.createScaledBitmap(src, w, h, true), 0f, 0f, null) }
-            p.coverFile(id).outputStream().use { flat.compress(Bitmap.CompressFormat.JPEG, 88, it) }
+            Covers.saveSquare(p.coverFile(id), src) // corte central quadrado
             covers.clear(); fill()
             Toast.makeText(this, "Capa definida", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {

@@ -197,6 +197,24 @@ class Emulator(private val ctx: Context, private val onFrame: () -> Unit) {
         return synchronized(lock) { Native.loadState(f.readBytes()) }
     }
 
+    /** Ponto de retomada: estado guardado ao sair do app, usado só se o sistema fechar o jogo enquanto você estava fora. */
+    fun resumeFile() = File(statesDir, "$base.resume")
+
+    fun saveResume(): Boolean {
+        if (!loaded) return false
+        val d = synchronized(lock) { Native.saveState() } ?: return false
+        return try { synchronized(saveLock) { resumeFile().writeBytes(d) }; true } catch (e: Exception) { false }
+    }
+
+    fun loadResume(): Boolean {
+        if (!loaded) return false
+        val f = resumeFile()
+        if (!f.exists()) return false
+        return synchronized(lock) { Native.loadState(f.readBytes()) }
+    }
+
+    fun clearResume() { try { resumeFile().delete() } catch (e: Exception) { } }
+
     fun stop() {
         running = false
         thread?.join(2000); thread = null

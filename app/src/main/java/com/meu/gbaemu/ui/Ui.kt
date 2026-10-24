@@ -89,3 +89,16 @@ object T {
         right?.let { addView(it, LinearLayout.LayoutParams(dp(c, 42), dp(c, 42))) }
     }
 }
+
+/** Caixa sempre QUADRADA: a altura acompanha a largura (usada nas capas do menu principal). */
+class SquareFrame(c: Context) : FrameLayout(c) {
+    override fun onMeasure(w: Int, h: Int) { super.onMeasure(w, w) }
+}
+
+/** Caixa com proporção fixa largura:altura (ex.: 1.5 para as fotos dos save states, 3:2). */
+class RatioFrame(c: Context, private val ratio: Float) : FrameLayout(c) {
+    override fun onMeasure(w: Int, h: Int) {
+        val width = MeasureSpec.getSize(w)
+        super.onMeasure(MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec((width / ratio).toInt(), MeasureSpec.EXACTLY))
+    }
+}

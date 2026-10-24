@@ -79,6 +79,7 @@ class Prefs(c: Context) {
     var autoResume get() = b("autoResume", false); set(v) = put("autoResume", v)
     var ffAudio get() = b("ffAudio", true); set(v) = put("ffAudio", v)
     var cheatsOn get() = b("cheatsOn", false); set(v) = put("cheatsOn", v)
+    var onlineAuto get() = b("onlineAuto", false); set(v) = put("onlineAuto", v) // buscar cheats online sozinho ao abrir um jogo sem cheats (desligado = tudo offline)
     var bgMenus get() = b("bgMenus", true); set(v) = put("bgMenus", v)
     var bgDim get() = i("bgDim", 50); set(v) = put("bgDim", v)
     var askedStorage get() = b("askedStorage", false); set(v) = put("askedStorage", v)

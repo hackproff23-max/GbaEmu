@@ -5,6 +5,12 @@ import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import com.meu.gbaemu.ui.Backup
+import com.meu.gbaemu.ui.CheatBank
+import com.meu.gbaemu.ui.Ident
+import com.meu.gbaemu.ui.Net
+import com.meu.gbaemu.ui.ProgressDlg
+import com.meu.gbaemu.ui.RatioFrame
+import com.meu.gbaemu.ui.Store
 import com.meu.gbaemu.ui.Cheat
 import com.meu.gbaemu.ui.Cheats
 import com.meu.gbaemu.ui.Dlg
@@ -18,10 +24,13 @@ import com.meu.gbaemu.ui.SettingsActivity
 import com.meu.gbaemu.ui.Prefs as UiPrefs
 import android.content.SharedPreferences
 import android.content.res.ColorStateList
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.drawable.ColorDrawable
 import android.graphics.Color
+import android.text.Editable
 import android.text.InputType
+import android.text.TextWatcher
 import android.text.format.DateFormat
 import android.view.Gravity
 import android.widget.ImageView
@@ -37,6 +46,7 @@ import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewOutlineProvider
 import android.view.WindowManager
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -63,10 +73,19 @@ class MainActivity : Activity() {
     private var gameName = ""
     private var cheats = ArrayList<Cheat>()
     private var bgSig = ""
+    // estado do menu aberto: se o app for fechado pelo sistema enquanto você está fora, ele volta com o mesmo menu (e o texto do cheat) aberto
+    private var openMenu = ""
+    private var draftName = ""
+    private var draftCode = ""
+    private var restored = false
+    private var romInfo: Ident.Info? = null
+    private var coverCache: Bitmap? = null
+    private var coverTried = false
     private fun layKey(base: String) = if (profile == KB_PROFILES[0]) base else "$base.$profile"
 
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
+        restored = b != null
         prefs = getSharedPreferences("gba", MODE_PRIVATE)
         uiP = UiPrefs(this)
         val ui = uiP
@@ -118,7 +137,38 @@ class MainActivity : Activity() {
         else (intent.getStringExtra("rom_uri") ?: prefs.getString("rom_uri", null))?.let { u ->
             try { loadRom(Uri.parse(u)) } catch (e: Exception) { toast("Erro: ${e.message}") }
         }
+        if (b != null && !editOnly) {
+            val m = b.getString("menu") ?: ""
+            if (m.isNotEmpty()) { draftName = b.getString("dn") ?: ""; draftCode = b.getString("dc") ?: ""; glView.post { reopen(m) } }
+        }
     }
+
+    override fun onSaveInstanceState(o: Bundle) {
+        super.onSaveInstanceState(o)
+        o.putString("menu", openMenu); o.putString("dn", draftName); o.putString("dc", draftCode)
+    }
+
+    /** Reabre o menu que estava aberto quando o app foi fechado pelo sistema. */
+    private fun reopen(id: String) {
+        when {
+            id == "menu" -> showMenu()
+            id == "cheats" -> cheatsDialog()
+            id.startsWith("cheatEdit:") -> cheatEdit(id.substringAfter(':').toIntOrNull() ?: -1, draftName, draftCode)
+            id == "state:save" -> stateDialog(true)
+            id == "state:load" -> stateDialog(false)
+            id == "fx" -> fxDialog()
+        }
+    }
+
+    private fun coverBmp(): Bitmap? {
+        if (!coverTried) {
+            coverTried = true
+            coverCache = gameId?.let { uiP.coverFile(it) }?.takeIf { it.exists() }?.let { BitmapFactory.decodeFile(it.path) }
+        }
+        return coverCache
+    }
+
+    private fun gameTitle(): String = if (gameName.isNotEmpty()) Store.base(gameName) else "Menu"
 
     // ---------- util ----------
     private fun toast(m: String) = runOnUiThread { Toast.makeText(this, m, Toast.LENGTH_LONG).show() }
@@ -144,7 +194,7 @@ class MainActivity : Activity() {
     private fun showDlgGet(b: AlertDialog.Builder): AlertDialog {
         openDialogs++; emu.paused = true
         val d = b.create()
-        d.setOnDismissListener { openDialogs--; if (openDialogs <= 0) { openDialogs = 0; emu.paused = false }; immersive() }
+        d.setOnDismissListener { openDialogs--; if (openDialogs <= 0) { openDialogs = 0; openMenu = ""; emu.paused = false }; immersive() }
         d.show()
         return d
     }
@@ -188,12 +238,19 @@ class MainActivity : Activity() {
                 }
             }
         }
+        romInfo = Ident.infoOf(bytes, name)
         val err = emu.start(bytes, name)
         if (err != null) toast(err)
         else {
             gameName = name
             cheats = Cheats.load(this, name); emu.applyCheats(cheats)
-            if (uiP.autoResume && !editOnly && emu.loadState(0)) { emu.applyCheats(cheats); toast("Continuando de onde você parou") }
+            if (!editOnly) {
+                // o sistema fechou o app enquanto você estava fora: volta exatamente de onde parou
+                if (restored && emu.loadResume()) { emu.applyCheats(cheats); toast("Voltando de onde você parou") }
+                else if (uiP.autoResume && emu.loadState(0)) { emu.applyCheats(cheats); toast("Continuando de onde você parou") }
+                if (uiP.onlineAuto && cheats.isEmpty() && !restored) fetchCheats(true)
+            }
+            restored = false // vale só para a primeira ROM aberta depois que o sistema recriou a tela
         }
     }
 
@@ -287,9 +344,9 @@ class MainActivity : Activity() {
     private val THEME = AlertDialog.THEME_DEVICE_DEFAULT_DARK
 
     /** Menu no tema do app (cores RGB e fonte importada): cada linha fecha o menu e executa a ação. */
-    private fun menuDlg(title: String, rows: List<Row>): AlertDialog {
+    private fun menuDlg(title: String, rows: List<Row>, cols: Int = 1, withCover: Boolean = false): AlertDialog {
         lateinit var dlg: AlertDialog
-        val content = Dlg.content(this, title, rows) { dlg.dismiss() }
+        val content = Dlg.content(this, title, rows, { dlg.dismiss() }, cols, if (withCover) coverBmp() else null, withCover)
         dlg = showDlgGet(AlertDialog.Builder(this, THEME).setView(content))
         themed(dlg)
         return dlg
@@ -373,6 +430,7 @@ class MainActivity : Activity() {
     }
 
     private fun fxDialog() {
+        openMenu = "fx"
         val ui = uiP
         val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         body.addView(fxSlider("Brilho", -100, 100, ui.fxBright, { renderer.fxBright = it; glView.requestRender() }, { ui.fxBright = it }))
@@ -438,38 +496,47 @@ class MainActivity : Activity() {
 
     // ---------- menu ----------
     private fun stateDialog(save: Boolean) {
+        openMenu = if (save) "state:save" else "state:load"
         val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         lateinit var dlg: AlertDialog
-        for (s in (if (save) (1..5).toList() else (0..5).toList())) { // slot 0 = auto-save (só carregar)
-            val sf = emu.stateFile(s); val tf = emu.thumbFile(s); val has = sf.exists()
-            val img = ImageView(this).apply {
-                scaleType = ImageView.ScaleType.CENTER_CROP; setBackgroundColor(T.BG)
-                if (has && tf.exists()) BitmapFactory.decodeFile(tf.path)?.let { setImageBitmap(it) }
-            }
-            val info = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL; setPadding(T.dp(context, 14), 0, 0, 0)
-                addView(T.text(context, if (s == 0) "Auto-save" else "Slot $s", 15f, T.TX, true))
-                addView(T.text(context, if (has) DateFormat.format("dd/MM  HH:mm", sf.lastModified()).toString() else "vazio", 12f, T.MUT))
-            }
-            Dlg.add(this, body, LinearLayout(this).apply {
-                gravity = Gravity.CENTER_VERTICAL; background = T.box(context, T.CARD, T.LINE, 12)
-                setPadding(T.dp(context, 8), T.dp(context, 8), T.dp(context, 8), T.dp(context, 8))
-                addView(img, LinearLayout.LayoutParams(T.dp(context, 120), T.dp(context, 80)))
-                addView(info, LinearLayout.LayoutParams(0, -2, 1f))
-                setOnClickListener {
-                    dlg.dismiss()
-                    val ok = if (save) emu.saveState(s) else emu.loadState(s)
-                    if (!save && ok) emu.applyCheats(cheats) // garante os cheats ligados depois de carregar o estado
-                    toast(if (ok) (if (save) "Estado salvo no slot $s" else "Estado carregado") else (if (save) "Não foi possível salvar" else "Slot vazio"))
+        val slots = if (save) (1..5).toList() else (0..5).toList() // slot 0 = auto-save (só carregar)
+        val cols = Dlg.cols(this); val m = T.dp(this, 4)
+        slots.chunked(cols).forEach { chunk ->
+            val line = LinearLayout(this).apply { isBaselineAligned = false }
+            chunk.forEach { s ->
+                val sf = emu.stateFile(s); val tf = emu.thumbFile(s); val has = sf.exists()
+                val pic = RatioFrame(this, 1.5f).apply {
+                    setBackgroundColor(T.BG)
+                    val bmp = if (has && tf.exists()) BitmapFactory.decodeFile(tf.path) else null
+                    if (bmp != null) addView(ImageView(context).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setImageBitmap(bmp) }, FrameLayout.LayoutParams(-1, -1))
+                    else addView(T.text(context, if (has) "sem foto" else "vazio", 13f, T.MUT).apply { gravity = Gravity.CENTER }, FrameLayout.LayoutParams(-1, -1))
                 }
-            })
+                val tile = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL; background = T.box(context, T.CARD, T.LINE, 12)
+                    clipToOutline = true; outlineProvider = ViewOutlineProvider.BACKGROUND
+                    addView(pic, LinearLayout.LayoutParams(-1, -2))
+                    addView(T.text(context, if (s == 0) "Auto-save" else "Slot $s", 14f, T.TX, true).apply { setPadding(T.dp(context, 10), T.dp(context, 8), T.dp(context, 10), 0) })
+                    addView(T.text(context, if (has) DateFormat.format("dd/MM  HH:mm", sf.lastModified()).toString() else "vazio", 12f, T.MUT).apply { setPadding(T.dp(context, 10), 0, T.dp(context, 10), T.dp(context, 8)) })
+                    setOnClickListener {
+                        dlg.dismiss()
+                        val ok = if (save) emu.saveState(s) else emu.loadState(s)
+                        if (!save && ok) emu.applyCheats(cheats) // garante os cheats ligados depois de carregar o estado
+                        toast(if (ok) (if (save) "Estado salvo no slot $s" else "Estado carregado") else (if (save) "Não foi possível salvar" else "Slot vazio"))
+                    }
+                }
+                line.addView(tile, LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(m, m, m, m) })
+            }
+            repeat(cols - chunk.size) { line.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f).apply { setMargins(m, m, m, m) }) }
+            body.addView(line, LinearLayout.LayoutParams(-1, -2))
         }
-        dlg = showDlgGet(AlertDialog.Builder(this, THEME).setView(Dlg.frame(this, if (save) "Salvar estado" else "Carregar estado", body)))
+        val head = (if (save) "Salvar estado" else "Carregar estado") + "\n" + gameTitle()
+        dlg = showDlgGet(AlertDialog.Builder(this, THEME).setView(Dlg.frame(this, head, body, coverBmp(), true, true)))
         themed(dlg)
     }
 
     private fun showMenu() {
-        menuDlg("Menu", listOf(
+        openMenu = "menu"
+        menuDlg(gameTitle(), listOf(
             Row("folder", "Abrir ROM") { pick(1, false) },
             Row("layers", "Shaders") { shaderMenu() },
             Row("drop", "Cores e efeitos", sub = fxSummary()) { fxDialog() },
@@ -477,16 +544,17 @@ class MainActivity : Activity() {
             Row("save", "Salvar estado") { stateDialog(true) },
             Row("load", "Carregar estado") { stateDialog(false) },
             *(if (uiP.cheatsOn) arrayOf(Row("cheat", "Cheats", sub = "${cheats.count { it.on }} ligado(s)") { cheatsDialog() }) else emptyArray<Row>()),
-            Row("ff", "Acelerar (${emu.ffMul}x)", sub = if (emu.fast) "ligado" else "desligado", checked = emu.fast) { emu.fast = !emu.fast },
+            Row("ff", "Acelerar", sub = "${emu.ffMul}x · " + (if (emu.fast) "ligado" else "desligado"), checked = emu.fast) { emu.fast = !emu.fast },
             Row("restart", "Reiniciar jogo") { emu.reset(); emu.applyCheats(cheats) },
             Row("gear", "Configurações") { startActivity(Intent(this, SettingsActivity::class.java)) },
-            Row("home", "Voltar à biblioteca") { finish() }))
+            Row("home", "Voltar à biblioteca") { finish() }), Dlg.cols(this), true)
     }
 
     // ---------- cheats ----------
     private fun saveCheats() { Cheats.save(this, gameName, cheats); emu.applyCheats(cheats) }
 
     private fun cheatsDialog() {
+        openMenu = "cheats"
         lateinit var dlg: AlertDialog
         val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         if (cheats.isEmpty()) body.addView(T.note(this, "Nenhum cheat neste jogo ainda. Toque em “Adicionar cheat”."))
@@ -499,6 +567,7 @@ class MainActivity : Activity() {
             Dlg.add(this, body, v)
         }
         Dlg.add(this, body, Dlg.button(this, "＋  Adicionar cheat", true) { dlg.dismiss(); cheatEdit(-1) })
+        Dlg.add(this, body, Dlg.button(this, "⬇  Buscar cheats online deste jogo (opcional)", false) { dlg.dismiss(); fetchCheats(false) })
         if (cheats.isNotEmpty()) body.addView(T.note(this, "Toque para ligar/desligar · segure para editar ou excluir"))
         dlg = showDlgGet(AlertDialog.Builder(this, THEME).setView(Dlg.frame(this, "Cheats", body)))
         themed(dlg)
@@ -511,7 +580,47 @@ class MainActivity : Activity() {
             Row("trash", "Excluir") { cheats.removeAt(i); saveCheats(); cheatsDialog() }))
     }
 
-    private fun cheatEdit(idx: Int) {
+    /** Procura os cheats do jogo (opcional). Usa primeiro o banco já baixado (sem internet); só então tenta a internet. */
+    private fun fetchCheats(silent: Boolean) {
+        val info = romInfo ?: return
+        val name = gameName
+        val pd = if (silent) null else ProgressDlg(this, "Cheats online")
+        Thread {
+            var found: java.io.File? = null
+            try {
+                var official = Ident.lookup(this, info)
+                if (official == null && !Ident.hasIndex(this, info.system)) {
+                    pd?.set("Baixando a lista de jogos…")
+                    if (Ident.downloadIndex(this, info.system)) official = Ident.lookup(this, info)
+                }
+                val base = Store.base(name)
+                found = CheatBank.findLocal(this, info.system, official, base)
+                if (found == null) {
+                    pd?.set("Procurando cheats para este jogo…")
+                    for (cand in listOfNotNull(official, base).distinct()) {
+                        found = CheatBank.downloadOne(this, info.system, cand)
+                        if (found != null) break
+                    }
+                }
+            } catch (e: Throwable) { }
+            val added = found?.let { Cheats.importInto(this, name, Cheats.parseCht(it)) } ?: -1
+            runOnUiThread {
+                pd?.close()
+                if (added >= 0) { cheats = Cheats.load(this, name); emu.applyCheats(cheats) }
+                if (!silent) {
+                    toast(when {
+                        added > 0 -> "$added cheat(s) adicionado(s), desligados: ligue os que quiser"
+                        added == 0 -> "Esses cheats já estavam na lista"
+                        else -> "Nenhum cheat encontrado (sem internet ou jogo sem cheats no banco)"
+                    })
+                    cheatsDialog()
+                } else if (added > 0) toast("$added cheat(s) baixado(s) para este jogo")
+            }
+        }.start()
+    }
+
+    private fun cheatEdit(idx: Int, dn: String? = null, dc: String? = null) {
+        openMenu = "cheatEdit:$idx"
         val old = cheats.getOrNull(idx)
         fun field(dica: String, v: String, multi: Boolean) = EditText(this).apply {
             setHint(dica); setHintTextColor(T.MUT); setTextColor(T.TX); setText(v); T.font?.let { typeface = it }
@@ -522,8 +631,16 @@ class MainActivity : Activity() {
                 minLines = 3; gravity = Gravity.TOP
             } else setSingleLine()
         }
-        val nome = field("Nome do cheat", old?.name ?: "", false)
-        val cod = field("Código (GameShark / Action Replay / CodeBreaker)", old?.code?.replace('+', '\n') ?: "", true)
+        val nome = field("Nome do cheat", dn ?: old?.name ?: "", false)
+        val cod = field("Código (GameShark / Action Replay / CodeBreaker)", dc ?: old?.code?.replace('+', '\n') ?: "", true)
+        // guarda o que você digitou: se for copiar um código em outro app, nada se perde
+        draftName = nome.text.toString(); draftCode = cod.text.toString()
+        fun watch(e: EditText, f: (String) -> Unit) = e.addTextChangedListener(object : TextWatcher {
+            override fun afterTextChanged(x: Editable?) { f(x?.toString() ?: "") }
+            override fun beforeTextChanged(x: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(x: CharSequence?, a: Int, b: Int, c: Int) {}
+        })
+        watch(nome) { draftName = it }; watch(cod) { draftCode = it }
         lateinit var dlg: AlertDialog
         val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         Dlg.add(this, body, nome); Dlg.add(this, body, cod)
@@ -593,5 +710,7 @@ class MainActivity : Activity() {
         Backup.export(this)
         glView.onPause() }
     override fun onResume() { super.onResume(); applyPrefsLive(); glView.onResume(); if (openDialogs == 0) emu.paused = false; immersive() }
-    override fun onDestroy() { super.onDestroy(); emu.stop() }
+    /** Ao sair do app (mesmo por um instante) guarda o ponto exato do jogo: se o sistema fechar o app, ele volta daqui. */
+    override fun onStop() { super.onStop(); if (!isFinishing && !editOnly && ::emu.isInitialized && emu.loaded) emu.saveResume() }
+    override fun onDestroy() { super.onDestroy(); if (isFinishing && ::emu.isInitialized) emu.clearResume(); emu.stop() }
 }

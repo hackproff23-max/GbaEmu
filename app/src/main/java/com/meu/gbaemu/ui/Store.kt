@@ -27,7 +27,7 @@ object Store {
     const val ROOT_NAME = "EmuladorPro"
     private val SUB = mapOf(
         "config" to "Configuracoes", "states" to "SaveStates", "saves" to "Saves",
-        "cheats" to "Cheats", "covers" to "Capas", "controls" to "Controles"
+        "cheats" to "Cheats", "covers" to "Capas", "controls" to "Controles", "bank" to "Banco"
     )
     private val ROM_EXT = setOf("gba", "gb", "gbc", "zip", "sgb", "srl", "bin")
     private var cached: File? = null
@@ -72,10 +72,15 @@ object Store {
         cached?.let { if (cachedShared == shared && it.exists()) return it }
         val cands = ArrayList<File>()
         if (shared) cands += File(Environment.getExternalStorageDirectory(), ROOT_NAME)
+        // Android/media/<app>: não é apagada ao desinstalar o app, então saves e configurações sobrevivem mesmo sem a permissão total
+        @Suppress("DEPRECATION")
+        try { app.externalMediaDirs.firstOrNull { it != null }?.let { cands += File(it, ROOT_NAME) } } catch (e: Exception) { }
         app.getExternalFilesDir(null)?.let { cands += File(it, ROOT_NAME) }
         cands += File(app.filesDir, ROOT_NAME)
         val ok = cands.firstOrNull { make(it) } ?: cands.last()
         if (shared && ok == cands.first()) {
+            @Suppress("DEPRECATION")
+            try { app.externalMediaDirs.firstOrNull { it != null }?.let { mergeInto(File(it, ROOT_NAME), ok) } } catch (e: Exception) { }
             app.getExternalFilesDir(null)?.let { mergeInto(File(it, ROOT_NAME), ok) }
             mergeInto(File(app.filesDir, ROOT_NAME), ok)
         }
@@ -99,14 +104,48 @@ object Store {
 /** Cópia das configurações em EmuladorPro/Configuracoes, para sobreviver a reinstalações do app. */
 object Backup {
     private const val NAME = "configuracoes.json"
-    private val SKIP = setOf("lib", "rom_uri", "pendingCover", "pendingSkin", "askedStorage", "restoredOnce")
+    private val SKIP = setOf("rom_uri", "pendingCover", "pendingSkin", "askedStorage", "restoredOnce")
     private val IGNORE_EMPTY = setOf("pendingCover", "pendingSkin", "askedStorage")
 
     fun file(ctx: Context) = File(Store.dir(ctx, "config"), NAME)
 
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var pending: Runnable? = null
+
+    /** Grava a cópia pouco depois de QUALQUER mudança de configuração (junta várias mudanças seguidas numa só gravação). */
+    fun schedule(ctx: Context) {
+        val app = ctx.applicationContext
+        pending?.let { handler.removeCallbacks(it) }
+        val r = Runnable { Thread { export(app) }.start() }
+        pending = r
+        handler.postDelayed(r, 500)
+    }
+
+    /** Converte o endereço de um jogo da biblioteca em arquivo real, quando dá (precisa do acesso a todos os arquivos). */
+    private fun pathOf(u: String): File? = try {
+        val uri = Uri.parse(u)
+        when (uri.scheme) {
+            "file" -> uri.path?.let { File(it) }
+            "content" -> if (uri.authority == "com.android.externalstorage.documents") {
+                val id = uri.lastPathSegment ?: ""
+                if (id.startsWith("primary:")) File(Environment.getExternalStorageDirectory(), id.removePrefix("primary:")) else null
+            } else null
+            else -> null
+        }
+    } catch (e: Exception) { null }
+
+    /** Depois de reinstalar, as permissões dos arquivos escolhidos se perdem; se o jogo está na memória interna, abre direto pelo caminho. */
+    private fun fixLib(v: String): String = v.split("\n").filter { it.contains("\t") }.joinToString("\n") { line ->
+        val i = line.indexOf('\t'); val u = line.substring(0, i); val id = line.substring(i + 1)
+        val f = if (u.startsWith("file:")) null else pathOf(u)
+        if (f != null && f.exists() && f.canRead()) "${Uri.fromFile(f)}\t$id" else line
+    }
+
     fun export(ctx: Context) {
         try {
             val sp = ctx.getSharedPreferences("gba", Context.MODE_PRIVATE)
+            // app recém-instalado ainda vazio: não sobrescreve uma cópia boa com "nada"
+            if (sp.all.keys.none { it !in IGNORE_EMPTY && it !in SKIP }) return
             val o = JSONObject()
             for ((k, v) in sp.all) {
                 if (k in SKIP) continue
@@ -143,7 +182,7 @@ object Backup {
                 n++
                 val e = o.getJSONObject(k)
                 when (e.getString("t")) {
-                    "s" -> ed.putString(k, e.getString("v"))
+                    "s" -> ed.putString(k, if (k == "lib") fixLib(e.getString("v")) else e.getString("v"))
                     "i" -> ed.putInt(k, e.getInt("v"))
                     "b" -> ed.putBoolean(k, e.getBoolean("v"))
                     "l" -> ed.putLong(k, e.getLong("v"))
@@ -184,6 +223,33 @@ object Cheats {
                 "${if (it.on) 1 else 0}|${it.name.replace('|', '/').replace('\n', ' ')}|${it.code}"
             } + "\n")
         } catch (e: Exception) { }
+    }
+
+    /** Lê um .cht do libretro (cheat0_desc / cheat0_code). Todos entram desligados. */
+    fun parseCht(f: File): List<Cheat> {
+        val desc = HashMap<Int, String>(); val code = HashMap<Int, String>()
+        val re = Regex("^cheat(\\d+)_(desc|code)\\s*=\\s*\"(.*)\"\\s*$")
+        try {
+            for (l in f.readLines()) {
+                val m = re.find(l.trim()) ?: continue
+                val i = m.groupValues[1].toIntOrNull() ?: continue
+                if (m.groupValues[2] == "desc") desc[i] = m.groupValues[3] else code[i] = m.groupValues[3]
+            }
+        } catch (e: Exception) { }
+        return code.keys.sorted().mapNotNull { i ->
+            val c = normalize(code[i] ?: return@mapNotNull null) ?: return@mapNotNull null
+            Cheat(desc[i]?.trim()?.ifEmpty { null } ?: "Cheat ${i + 1}", c, false)
+        }
+    }
+
+    /** Junta cheats novos aos do jogo (sem repetir códigos). Devolve quantos foram adicionados. */
+    fun importInto(ctx: Context, game: String, add: List<Cheat>): Int {
+        val cur = load(ctx, game)
+        val have = cur.map { it.code }.toHashSet()
+        var n = 0
+        for (c in add) if (have.add(c.code)) { cur.add(c); n++ }
+        if (n > 0) save(ctx, game, cur)
+        return n
     }
 
     private fun isHex(s: String) = s.isNotEmpty() && s.all { it in '0'..'9' || it in 'A'..'F' }

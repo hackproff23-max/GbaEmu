@@ -176,6 +176,11 @@ class SettingsActivity : Activity() {
         col.addView(T.h(this, "Cheats"))
         col.addView(T.switchRow(this, "Mostrar menu de cheats no jogo", p.cheatsOn) { p.cheatsOn = it })
         col.addView(T.note(this, "Ligado: aparece “Cheats” no menu do jogo (☰). Cada jogo guarda seus códigos em EmuladorPro/Cheats."))
+        col.addView(T.h(this, "Cheats e capas online (opcional)"))
+        col.addView(T.note(this, "O app funciona 100% offline. Estas opções só usam a internet quando você toca nelas. O que for baixado fica em EmuladorPro (Banco, Cheats e Capas) e depois funciona sem internet. O jogo é identificado pelo conteúdo da ROM (CRC), não pelo nome do arquivo. Fonte: banco público do libretro."))
+        col.addView(T.switchRow(this, "Buscar cheats sozinho ao abrir um jogo sem cheats", p.onlineAuto) { p.onlineAuto = it })
+        col.addView(btn("Baixar banco de cheats (usar offline depois)", true) { downloadCheatBank() })
+        col.addView(btn("Baixar capas dos jogos da biblioteca", false) { downloadLibCovers() })
         col.addView(T.h(this, "Imagem de fundo"))
         col.addView(T.note(this, "PNG, JPG ou GIF (animado). Aparece atrás da tela do jogo e, se quiser, nos menus do app."))
         col.addView(btn(if (p.bgFile() != null) "Trocar imagem de fundo" else "Escolher imagem de fundo", true) {
@@ -216,6 +221,42 @@ class SettingsActivity : Activity() {
             AlertDialog.Builder(this, AlertDialog.THEME_DEVICE_DEFAULT_DARK).setTitle("Limpar a lista?").setMessage("Os arquivos e os saves não são apagados.")
                 .setPositiveButton("Limpar") { _, _ -> p.clearLibrary() }.setNegativeButton("Cancelar", null).show()
         })
+    }
+
+    /** Baixa todos os cheats do banco público (GBA, GB e GBC) para usar offline. Pode cancelar; o que já veio fica. */
+    private fun downloadCheatBank() {
+        val pd = ProgressDlg(this, "Baixando cheats")
+        Thread {
+            var total = 0; var failed = false
+            for (sys in Ident.SYSTEMS) {
+                if (pd.cancelled) break
+                val n = CheatBank.downloadAll(this, sys, { i, t -> pd.set(sys.removePrefix("Nintendo - ") + ": " + i + " de " + t) }, { pd.cancelled })
+                if (n < 0) failed = true else total += n
+            }
+            Net.main.post {
+                pd.close()
+                Toast.makeText(this, if (total == 0 && failed) "Não consegui baixar (sem internet?)" else "$total arquivo(s) de cheats baixado(s)", Toast.LENGTH_LONG).show()
+            }
+        }.start()
+    }
+
+    /** Baixa as capas que faltam (identifica cada jogo pela ROM). */
+    private fun downloadLibCovers() {
+        val todo = p.games().filter { !p.coverFile(it.id).exists() }
+        if (todo.isEmpty()) { Toast.makeText(this, "Todos os jogos já têm capa (ou a biblioteca está vazia)", Toast.LENGTH_LONG).show(); return }
+        val pd = ProgressDlg(this, "Baixando capas")
+        Thread {
+            var ok = 0; var fail = 0
+            for ((i, g) in todo.withIndex()) {
+                if (pd.cancelled) break
+                pd.set("${i + 1} de ${todo.size}\n${g.name}")
+                if (try { Covers.fetch(this, p, g) } catch (e: Throwable) { false }) ok++ else fail++
+            }
+            Net.main.post {
+                pd.close()
+                Toast.makeText(this, if (ok == 0 && fail > 0) "Não consegui baixar (sem internet ou jogo não encontrado)" else "$ok capa(s) baixada(s)" + if (fail > 0) " · $fail não encontrada(s)" else "", Toast.LENGTH_LONG).show()
+            }
+        }.start()
     }
 
     private fun displayName(u: Uri): String {

@@ -1,11 +1,11 @@
-PATCH 6 - GBA Emu
+PATCH 7 - GBA Emu
 =================
 Termux, na pasta do projeto (troque o caminho do zip se ele estiver em outro lugar):
 
   cd ~/GbaEmu
-  unzip -o ~/storage/downloads/gba-emu-patch-6.zip -d ~/GbaEmu
+  unzip -o ~/storage/downloads/gba-emu-patch-7.zip -d ~/GbaEmu
   git add .
-  git commit -m "Patch 6: fundo corrigido, orientacao app/jogo, cores e efeitos, cheats"
+  git commit -m "Patch 7: cheats e capas online opcionais, menus em grade com capa, retomada ao sair do app"
   git push
 
 Depois baixe o APK em: GitHub > Actions > Build APK > Artifacts (GbaEmu-debug).
@@ -13,21 +13,17 @@ Se a compilacao der erro, copie a mensagem vermelha do Actions e me mande.
 
 O QUE MUDOU
 -----------
-- FUNDO CORRIGIDO: ao escolher a imagem, o app apagava o proprio arquivo temporario e o fundo nunca era aplicado
-  (PNG, JPG e GIF). Agora funciona. Configuracoes > Avancado > Imagem de fundo.
-- ORIENTACAO SEPARADA: Configuracoes > Video tem "Orientacao do app" (biblioteca e configuracoes) e
-  "Orientacao do jogo" (so dentro do jogo). Cada jogo ainda pode ter a sua na Biblioteca.
-- CORES E EFEITOS (menu ☰ do jogo): Brilho, Contraste, Saturacao (-100 a +100) e Efeito LCD (0 a 100 = opacidade da grade).
-  Tudo comeca em 0 = imagem original. Os ajustes aparecem ao vivo enquanto voce mexe e ficam salvos.
-- CHEATS: os cheats sao reaplicados depois de reiniciar o jogo e de carregar um estado (incluindo o auto-resume).
+- CHEATS ONLINE (opcional): no menu do jogo > Cheats > "Buscar cheats online deste jogo". O jogo e identificado pelo CRC da ROM
+  (nao depende do nome do arquivo). Procura primeiro no banco ja baixado (offline) e so depois na internet.
+  Configuracoes > Avancado > "Cheats e capas online": baixar o banco inteiro para usar offline, e uma chave para buscar
+  cheats sozinho ao abrir um jogo sem cheats (desligada por padrao). Cheats baixados entram DESLIGADOS.
+- CAPAS ONLINE (opcional): botao na Biblioteca, em Configuracoes e no menu de segurar o jogo ("Baixar capa").
+- CAPAS QUADRADAS: no menu principal, e ao escolher da galeria ou baixar, a imagem e cortada no centro em quadrado perfeito.
+- MENUS EM GRADE COM CAPA: menu de segurar o jogo, menu do jogo, Salvar estado e Carregar estado mostram a capa e as opcoes em grade.
+- NAO FECHA AO SAIR DO APP: ao sair, o app guarda o ponto exato do jogo; se o sistema fechar o app, ao voltar o jogo continua de onde
+  estava e o menu que estava aberto (inclusive o cheat que voce estava digitando) reabre com o texto preservado.
+- CONFIGURACOES SALVAS A CADA MUDANCA: copia automatica em EmuladorPro/Configuracoes (inclui a lista de jogos).
+- REINSTALAR: saves, auto-saves e configuracoes sao lidos de novo da pasta EmuladorPro. Sem a permissao de arquivos, a pasta
+  fica em Android/media/<app>, que o Android NAO apaga ao desinstalar. Jogos que estao na memoria interna voltam sozinhos na lista.
 
-SOBRE OS CHEATS (Fire Red)
---------------------------
-Os codigos 509197D3 542975F4 e 78DA95DF 44018CB4 sao UM codigo so, de 2 linhas (Action Replay v3, criptografado).
-O nucleo mGBA le como um patch de ROM no endereco 08058E2E. Coloque as duas linhas no MESMO cheat, na ordem:
-
-  509197D3 542975F4
-  78DA95DF 44018CB4
-
-Nao misture tipos de codigo (GameShark e Action Replay) no mesmo jogo: o mGBA decide o tipo pela primeira linha.
-Codigo de patch de ROM so funciona na versao certa da ROM (a mesma para a qual o codigo foi feito).
+INTERNET: o app so usa a internet quando voce toca nos botoes online (ou liga a opcao automatica). Fonte: banco publico do libretro.
