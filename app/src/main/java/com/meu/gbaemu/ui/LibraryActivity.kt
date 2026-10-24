@@ -12,6 +12,10 @@ import android.graphics.drawable.GradientDrawable
 import android.content.res.Configuration
 import android.text.TextUtils
 import android.view.KeyEvent
+import android.os.Build
+import android.view.WindowInsets
+import android.view.WindowInsetsController
+import android.view.WindowManager
 import android.view.ViewOutlineProvider
 import android.view.inputmethod.EditorInfo
 import android.net.Uri
@@ -51,7 +55,7 @@ class LibraryActivity : Activity() {
         super.onCreate(b); p = Prefs(this); sig = T.sig(); window.statusBarColor = T.BG
         p.applyOrientation(this); bgSig = Backdrop.sig(p)
         land = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-        if (land) { setContentView(landUi()); return } // paisagem: menu novo; o retrato continua o mesmo abaixo
+        if (land) { setContentView(landUi()); immersive(); return } // paisagem: menu novo; o retrato continua o mesmo abaixo
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = Backdrop.drawable(context, p) ?: ColorDrawable(T.BG) }
         val gear = ImageButton(this).apply {
             setImageResource(com.meu.gbaemu.R.drawable.ic_gear)
@@ -98,7 +102,13 @@ class LibraryActivity : Activity() {
         if (Backup.restoreIfEmpty(this)) { recreate(); return }
         if (T.sig() != sig || Backdrop.sig(p) != bgSig) { recreate(); return }
         p.applyOrientation(this)
+        immersive()
         chips(); fill(); askStorage()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) immersive() // volta a esconder as barras depois de fechar um diálogo
     }
 
     override fun onPause() { super.onPause(); Backup.export(this) }
@@ -143,6 +153,23 @@ class LibraryActivity : Activity() {
 
     // ======================= MODO PAISAGEM =======================
 
+    /** Paisagem em tela cheia: esconde a barra de notificação e os botões virtuais (aparecem com um deslize na borda). */
+    private fun immersive() {
+        if (!land) return
+        if (Build.VERSION.SDK_INT >= 28) window.attributes = window.attributes.apply { layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES }
+        if (Build.VERSION.SDK_INT >= 30) {
+            window.setDecorFitsSystemWindows(false)
+            window.insetsController?.let {
+                it.hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
+                it.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = (View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY)
+        }
+    }
+
     private fun landUi(): View {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -155,6 +182,10 @@ class LibraryActivity : Activity() {
             setOnClickListener { startActivity(Intent(this@LibraryActivity, SettingsActivity::class.java)) }
         }
         val logo = ImageView(this).apply { setImageResource(com.meu.gbaemu.R.drawable.logo_gba); scaleType = ImageView.ScaleType.FIT_CENTER }
+        val back = T.text(this, "←", 22f, T.GOLD2, true).apply {
+            gravity = Gravity.CENTER; background = T.box(this@LibraryActivity, T.CARD, T.GOLD)
+            contentDescription = "Voltar"; setOnClickListener { finish() }
+        }
         chipHost = FrameLayout(this)
         val search = EditText(this).apply {
             hint = "Buscar"; setHintTextColor(T.MUT); T.font?.let { typeface = it }; setTextColor(T.TX); setSingleLine(); textSize = 13f
@@ -169,6 +200,7 @@ class LibraryActivity : Activity() {
         }
         root.addView(LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL; setPadding(T.dp(context, 16), T.dp(context, 8), T.dp(context, 16), T.dp(context, 4))
+            addView(back, LinearLayout.LayoutParams(T.dp(context, 42), T.dp(context, 42)).apply { rightMargin = T.dp(context, 10) })
             addView(logo, LinearLayout.LayoutParams(T.dp(context, 62), T.dp(context, 34)))
             addView(chipHost, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = T.dp(context, 12) })
             addView(search, LinearLayout.LayoutParams(T.dp(context, 150), -2).apply { rightMargin = T.dp(context, 10) })
@@ -205,6 +237,7 @@ class LibraryActivity : Activity() {
             return v to lb
         }
         val inner = LinearLayout(this).apply { gravity = Gravity.END or Gravity.CENTER_VERTICAL }
+        inner.addView(hint("←", "Voltar") { finish() }.first)
         inner.addView(hint("＋", "Adicionar") { pickRoms() }.first)
         inner.addView(hint("📁", "Pasta") { pickFolder() }.first)
         inner.addView(hint("⬇", "Capas") { downloadCovers(p.games(), false) }.first)
@@ -300,6 +333,7 @@ class LibraryActivity : Activity() {
                 KeyEvent.KEYCODE_DPAD_LEFT -> { if (i > 0) select(shown[i - 1].id); return true }
                 KeyEvent.KEYCODE_DPAD_RIGHT -> { if (i >= 0 && i < shown.size - 1) select(shown[i + 1].id); return true }
                 KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_DPAD_CENTER -> { selGame()?.let { play(it) }; return true }
+                KeyEvent.KEYCODE_BUTTON_B -> { finish(); return true }
                 KeyEvent.KEYCODE_BUTTON_Y -> { selGame()?.let { options(it) }; return true }
                 KeyEvent.KEYCODE_BUTTON_X -> { toggleSort(); return true }
                 KeyEvent.KEYCODE_BUTTON_START -> { startActivity(Intent(this, SettingsActivity::class.java)); return true }
