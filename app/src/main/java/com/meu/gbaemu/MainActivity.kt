@@ -101,6 +101,9 @@ class MainActivity : Activity() {
         }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         emu = Emulator(this) { glView.requestRender() }
+        // guarda de cheats: marcado enquanto há cheats ativos; se o app morrer assim, na próxima abertura eles vêm desligados
+        val guard = getSharedPreferences("guard", MODE_PRIVATE)
+        emu.onCheatArm = { on -> guard.edit().apply { if (on) putString("cheatGuard", gameName) else remove("cheatGuard") }.commit() }
         emu.onFatal = { m -> toast("O jogo parou por um erro ($m). Use Carregar estado ou volte à biblioteca.") }
         emu.ffMul = ui.ffMultiplierFor(gid); emu.ffAudio = ui.ffAudio; emu.autoEveryMs = ui.autoSaveMs
         emu.volume = if (ui.mute) 0f else ui.volumeFor(gid) / 100f
@@ -250,11 +253,19 @@ class MainActivity : Activity() {
         val err = emu.start(bytes, name) {
             // roda com o núcleo carregado e a thread do jogo ainda parada
             gameName = name
-            cheats = Cheats.load(this, name); emu.applyCheats(cheats)
+            cheats = Cheats.load(this, name)
+            val g = getSharedPreferences("guard", MODE_PRIVATE)
+            if (g.getString("cheatGuard", null) == name) {
+                // da última vez o app morreu com cheats ligados neste jogo: desliga todos antes de qualquer coisa
+                cheats.forEach { it.on = false }; Cheats.save(this, name, cheats)
+                g.edit().remove("cheatGuard").commit()
+                resumedMsg = "O jogo travou com cheats ligados da última vez. Eles foram desligados: ligue um por vez para achar o que causa o problema"
+            }
+            emu.applyCheats(cheats)
             if (!editOnly) {
                 // o sistema fechou o app enquanto você estava fora: volta exatamente de onde parou
-                if (restored && emu.loadResume()) { emu.applyCheats(cheats); resumedMsg = "Voltando de onde você parou" }
-                else if (uiP.autoResume && !(intent.getBooleanExtra("fresh", false) && !restored) && emu.loadState(0)) { emu.applyCheats(cheats); resumedMsg = "Continuando de onde você parou" }
+                if (restored && emu.loadResume()) { emu.applyCheats(cheats); if (resumedMsg == null) resumedMsg = "Voltando de onde você parou" }
+                else if (uiP.autoResume && !(intent.getBooleanExtra("fresh", false) && !restored) && emu.loadState(0)) { emu.applyCheats(cheats); if (resumedMsg == null) resumedMsg = "Continuando de onde você parou" }
             }
         }
         if (err != null) toast(err)
@@ -576,7 +587,10 @@ class MainActivity : Activity() {
     }
 
     // ---------- cheats ----------
-    private fun saveCheats() { Cheats.save(this, gameName, cheats); emu.applyCheats(cheats) }
+    private fun saveCheats() {
+        Cheats.save(this, gameName, cheats); emu.applyCheats(cheats)
+        if (emu.skippedCheatLines > 0) toast("${emu.skippedCheatLines} linha(s) ignorada(s): o núcleo só aceita códigos de 8+8 dígitos (GameShark/Action Replay)")
+    }
 
     private fun cheatsDialog() {
         openMenu = "cheats"
@@ -730,12 +744,12 @@ class MainActivity : Activity() {
 
     // ---------- ciclo de vida ----------
     override fun onWindowFocusChanged(f: Boolean) { super.onWindowFocusChanged(f); if (f) immersive() }
-    override fun onPause() { super.onPause(); emu.paused = true; emu.saveSram()
+    override fun onPause() { super.onPause(); emu.paused = true; emu.saveSram(); emu.armGuard(false)
         if (::uiP.isInitialized && emu.loaded && (uiP.autoSaveMs > 0 || uiP.autoResume)) emu.saveState(0)
         Backup.export(this)
         glView.onPause() }
-    override fun onResume() { super.onResume(); applyPrefsLive(); glView.onResume(); if (openDialogs == 0) emu.paused = false; immersive() }
+    override fun onResume() { super.onResume(); applyPrefsLive(); if (emu.loaded) emu.armGuard(true); glView.onResume(); if (openDialogs == 0) emu.paused = false; immersive() }
     /** Ao sair do app (mesmo por um instante) guarda o ponto exato do jogo: se o sistema fechar o app, ele volta daqui. */
     override fun onStop() { super.onStop(); if (!isFinishing && !editOnly && ::emu.isInitialized && emu.loaded) emu.saveResume() }
-    override fun onDestroy() { super.onDestroy(); if (::emu.isInitialized) { if (isFinishing) emu.clearResume(); emu.onFatal = null; emu.stop() } }
+    override fun onDestroy() { super.onDestroy(); if (::emu.isInitialized) { if (isFinishing) emu.clearResume(); emu.onFatal = null; emu.armGuard(false); emu.stop(); emu.onCheatArm = null } }
 }

@@ -6,6 +6,7 @@
 #include <vector>
 #include <string>
 #include <cstring>
+#include <cctype>
 #include <algorithm>
 #include "retro_min.h"
 
@@ -185,7 +186,13 @@ JNIEXPORT void JNICALL Java_com_meu_gbaemu_Native_cheatReset(JNIEnv *, jobject) 
 JNIEXPORT void JNICALL Java_com_meu_gbaemu_Native_cheatSet(JNIEnv *e, jobject, jint idx, jboolean on, jstring code) { GUARD;
     if (!g_loaded || !p_cheat_set || !code) return;
     const char *c = e->GetStringUTFChars(code, nullptr);
-    if (c) { p_cheat_set((unsigned)idx, on == JNI_TRUE, c); e->ReleaseStringUTFChars(code, c); }
+    if (c) {
+        // só aceita exatamente "XXXXXXXX XXXXXXXX" (hex): qualquer outra coisa nunca chega ao analisador do núcleo
+        bool ok = strlen(c) == 17 && c[8] == ' ';
+        for (int i = 0; ok && i < 17; i++) if (i != 8 && !isxdigit((unsigned char)c[i])) ok = false;
+        if (ok) p_cheat_set((unsigned)idx, on == JNI_TRUE, c);
+        e->ReleaseStringUTFChars(code, c);
+    }
 }
 JNIEXPORT void JNICALL Java_com_meu_gbaemu_Native_unload(JNIEnv *, jobject) { GUARD; unload_core(); }
 

@@ -1,3 +1,11 @@
+PATCH 8b - cheats sem travar o emulador
+---------------------------------------
+- Só linhas "XXXXXXXX XXXXXXXX" (GameShark/Action Replay, 8+8 hex) chegam ao núcleo; as de 12 dígitos são ignoradas com aviso.
+- Cheats entram ~2 s depois de o jogo estar rodando (nunca durante carregar estado, reiniciar ou abrir o jogo); ao carregar
+  estado ou reiniciar, são desligados no núcleo antes e religados depois.
+- GUARDA: se o app morrer com cheats ativos, na próxima abertura do jogo todos vêm DESLIGADOS, com aviso. Ligue um por vez.
+- Lista de cheats gravada de forma atômica.
+
 PATCH 8 - correções de estabilidade, menu 3x3 e auto-saves
 ============================================================
 - MENU 3x3 (lido de cima para baixo): Carregar estado, Salvar estado, Configurações | Shaders, Acelerar, Controles |

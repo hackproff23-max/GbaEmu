@@ -25,6 +25,13 @@ class Emulator(private val ctx: Context, private val onFrame: () -> Unit) {
     private var ringAccum = 0L
     private var ringTick = 0L
     private var io = Executors.newSingleThreadExecutor()
+    // cheats: só linhas válidas, aplicadas de forma adiada e nunca no meio de um carregamento de estado
+    @Volatile private var cheatCodes: List<String> = emptyList()
+    @Volatile private var cheatPending = false
+    @Volatile private var cheatDelay = 0
+    @Volatile var skippedCheatLines = 0
+    /** Avisa a tela para marcar/desmarcar o "guarda de cheats" (se o app morrer com ele marcado, os cheats são desligados na próxima vez). */
+    @Volatile var onCheatArm: ((Boolean) -> Unit)? = null
     private val saveLock = Any()
     @Volatile var volume = 1f
     @Volatile var baseMask = 0
@@ -153,6 +160,7 @@ class Emulator(private val ctx: Context, private val onFrame: () -> Unit) {
                     }
                 }
             }
+            if (cheatPending && --cheatDelay <= 0) { cheatPending = false; applyCheatsNow() }
             if (autoEveryMs > 0) {
                 val now = SystemClock.uptimeMillis()
                 if (now - lastAuto >= autoEveryMs) { lastAuto = now; saveState(0) } // slot 0 = auto-save
@@ -174,17 +182,45 @@ class Emulator(private val ctx: Context, private val onFrame: () -> Unit) {
         return o
     }
 
-    fun reset() { synchronized(lock) { Native.reset() } }
+    fun reset() {
+        synchronized(lock) { Native.cheatReset(); Native.reset() }
+        scheduleCheats()
+    }
 
-    /** Reaplica no núcleo todos os cheats ligados (limpa os anteriores primeiro). */
+    private val lineRe = Regex("^[0-9A-F]{8} [0-9A-F]{8}$")
+
+    /** Define quais cheats devem valer. Nada vai ao núcleo na hora: só depois de ~2 s de jogo rodando (o núcleo já assentou). */
     fun applyCheats(list: List<Cheat>) {
         if (!loaded) return
+        var skipped = 0
+        val lines = ArrayList<String>()
+        for (c in list) if (c.on) for (raw in c.code.split('+')) {
+            val l = raw.trim().uppercase()
+            if (l.isBlank()) continue
+            if (lineRe.matches(l)) lines.add(l) else skipped++ // linhas de 12 dígitos (CodeBreaker) o mGBA não entende: ignora em vez de arriscar
+        }
+        skippedCheatLines = skipped
+        cheatCodes = lines
+        if (lines.isEmpty()) { cheatPending = false; synchronized(lock) { try { Native.cheatReset() } catch (e: Throwable) { } }; onCheatArm?.invoke(false) }
+        else scheduleCheats()
+    }
+
+    private fun scheduleCheats() { if (cheatCodes.isNotEmpty()) { cheatDelay = CHEAT_DELAY_FRAMES; cheatPending = true } }
+
+    private fun applyCheatsNow() {
+        val lines = cheatCodes
+        onCheatArm?.invoke(true) // marca ANTES de mexer no núcleo
         synchronized(lock) {
-            Native.cheatReset()
-            var i = 0
-            for (c in list) if (c.on) for (line in c.code.split('+')) if (line.isNotBlank()) Native.cheatSet(i++, true, line)
+            try {
+                Native.cheatReset()
+                var i = 0
+                for (l in lines) Native.cheatSet(i++, true, l)
+            } catch (e: Throwable) { cheatCodes = emptyList() }
         }
     }
+
+    /** Liga/desliga o guarda ao entrar/sair do app (quem chamar decide). */
+    fun armGuard(on: Boolean) { if (!on || cheatCodes.isNotEmpty()) onCheatArm?.invoke(on) }
 
     fun saveSram() {
         if (!loaded) return
@@ -276,7 +312,14 @@ class Emulator(private val ctx: Context, private val onFrame: () -> Unit) {
     fun loadState(slot: Int): Boolean {
         if (!loaded) return false
         val d = readSealed(stateFile(slot)) ?: return false
-        return try { synchronized(lock) { Native.loadState(d) } } catch (e: Throwable) { false }
+        return unserializeSafely(d)
+    }
+
+    /** Carrega o estado com os cheats DESLIGADOS no núcleo; eles voltam pouco depois, já com o jogo rodando. */
+    private fun unserializeSafely(d: ByteArray): Boolean {
+        val ok = try { synchronized(lock) { try { Native.cheatReset() } catch (e: Throwable) { }; Native.loadState(d) } } catch (e: Throwable) { false }
+        scheduleCheats()
+        return ok
     }
 
     // ---------- 5 auto-saves temporários (slots 10..14), um a cada 3 minutos, em rodízio ----------
@@ -317,7 +360,7 @@ class Emulator(private val ctx: Context, private val onFrame: () -> Unit) {
     fun loadResume(): Boolean {
         if (!loaded) return false
         val d = readSealed(resumeFile()) ?: return false
-        return try { synchronized(lock) { Native.loadState(d) } } catch (e: Throwable) { false }
+        return unserializeSafely(d)
     }
 
     fun clearResume() { try { resumeFile().delete() } catch (e: Exception) { } }
@@ -343,5 +386,6 @@ class Emulator(private val ctx: Context, private val onFrame: () -> Unit) {
         const val TURBO_A = 1 shl 16; const val TURBO_B = 1 shl 17
         const val AUTO_FIRST = 10; const val AUTO_COUNT = 5
         const val AUTO_RING_MS = 3 * 60 * 1000L
+        const val CHEAT_DELAY_FRAMES = 120
     }
 }

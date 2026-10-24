@@ -219,9 +219,11 @@ object Cheats {
 
     fun save(ctx: Context, game: String, list: List<Cheat>) {
         try {
-            file(ctx, game).writeText(list.joinToString("\n") {
+            val f = file(ctx, game); val tmp = File(f.path + ".tmp")
+            tmp.writeText(list.joinToString("\n") {
                 "${if (it.on) 1 else 0}|${it.name.replace('|', '/').replace('\n', ' ')}|${it.code}"
             } + "\n")
+            if (!tmp.renameTo(f)) { f.writeText(tmp.readText()); tmp.delete() }
         } catch (e: Exception) { }
     }
 
