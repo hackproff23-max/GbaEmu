@@ -37,7 +37,7 @@ fun orientCode(v: String): Int = when (v) {
 /** Ações que podem ser ligadas a botões de um controle (Bluetooth/USB): id e nome. */
 val PAD_ACTIONS = listOf("a" to "Botão A", "b" to "Botão B", "l" to "Gatilho L", "r" to "Gatilho R", "start" to "Start", "select" to "Select",
     "up" to "Direcional ↑", "down" to "Direcional ↓", "left" to "Direcional ←", "right" to "Direcional →",
-    "ta" to "Turbo A", "tb" to "Turbo B", "cm" to "Combo A+B", "ff" to "Fast-forward (segurar)", "menu" to "Menu do jogo")
+    "ta" to "Turbo A", "tb" to "Turbo B", "cm" to "Combo A+B", "ff" to "Fast-forward (liga/desliga)", "menu" to "Menu do jogo")
 /** Botão padrão de cada ação (0 = nenhum). */
 val PAD_DEFAULT = mapOf("a" to KeyEvent.KEYCODE_BUTTON_A, "b" to KeyEvent.KEYCODE_BUTTON_B, "l" to KeyEvent.KEYCODE_BUTTON_L1, "r" to KeyEvent.KEYCODE_BUTTON_R1,
     "start" to KeyEvent.KEYCODE_BUTTON_START, "select" to KeyEvent.KEYCODE_BUTTON_SELECT,

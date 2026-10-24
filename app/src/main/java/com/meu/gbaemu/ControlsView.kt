@@ -31,6 +31,9 @@ class ControlsView(ctx: Context) : View(ctx) {
         set(v) { field = v; invalidate() }
     var showFF = true
         set(v) { field = v; invalidate() }
+    /** Fast-forward ligado: o botão FF fica aceso. */
+    var ffOn = false
+        set(v) { field = v; postInvalidate() }
     var layoutPort = ""
     var layoutLand = ""
     var editMode = false
@@ -189,10 +192,11 @@ class ControlsView(ctx: Context) : View(ctx) {
     /** Combo/turbo sem PNG: círculo preto com contorno dourado. */
     private fun drawExtra(c: Canvas, e: El, r: RectF, a: Float) {
         val al = (a * 255).toInt()
-        extraFill.color = if (e.pressed) T.GOLD else T.CARD; extraFill.alpha = al
+        val on = e.pressed || (e.name == "ff" && ffOn)
+        extraFill.color = if (on) T.GOLD else T.CARD; extraFill.alpha = al
         extraLine.color = T.GOLD; extraLine.alpha = al
         c.drawOval(r, extraFill); c.drawOval(r, extraLine)
-        extraText.color = if (e.pressed) T.BG else T.GOLD2; extraText.alpha = al; extraText.typeface = T.font ?: Typeface.DEFAULT_BOLD
+        extraText.color = if (on) T.BG else T.GOLD2; extraText.alpha = al; extraText.typeface = T.font ?: Typeface.DEFAULT_BOLD
         extraText.textSize = r.width() * 0.30f
         c.drawText(LABELS[e.name] ?: "", r.centerX(), r.centerY() + extraText.textSize / 3, extraText)
     }

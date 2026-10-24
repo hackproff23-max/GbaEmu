@@ -183,7 +183,15 @@ class MainActivity : Activity() {
 
     // ---------- util ----------
     private fun toast(m: String) = runOnUiThread { Toast.makeText(this, m, Toast.LENGTH_LONG).show() }
-    private fun pushInput() { emu.baseMask = touchMask or padMask or axisMask }
+    private var ffPrev = false
+    /** Junta toque + controle + analógico. O botão FF (tela ou controle) liga/desliga o fast-forward a cada aperto. */
+    private fun pushInput() {
+        val m = touchMask or padMask or axisMask
+        val d = (m and Emulator.FF_BIT) != 0
+        if (d && !ffPrev) { emu.fast = !emu.fast; if (::controls.isInitialized) controls.ffOn = emu.fast }
+        ffPrev = d
+        emu.baseMask = m and Emulator.FF_BIT.inv()
+    }
 
     @Suppress("DEPRECATION")
     private fun immersive() {
@@ -307,6 +315,7 @@ class MainActivity : Activity() {
         controls.opacity = prefs.getFloat("opacity", 0.85f)
         controls.haptic = prefs.getBoolean("haptic", true)
         controls.showCombo = ui.showCombo; controls.showTurboA = ui.showTurboA; controls.showTurboB = ui.showTurboB; controls.showFF = ui.showFF
+        controls.ffOn = emu.fast
         controls.reloadSkin(false)
         glView.requestRender()
     }
@@ -582,7 +591,7 @@ class MainActivity : Activity() {
             Row("save", "Salvar estado") { stateDialog(true) },
             Row("gear", "Configurações") { startActivity(Intent(this, SettingsActivity::class.java)) },
             Row("layers", "Shaders") { shaderMenu() },
-            Row("ff", "Acelerar", sub = "${emu.ffMul}x · " + (if (emu.fast) "ligado" else "desligado"), checked = emu.fast) { emu.fast = !emu.fast },
+            Row("ff", "Acelerar", sub = "${emu.ffMul}x · " + (if (emu.fast) "ligado" else "desligado"), checked = emu.fast) { emu.fast = !emu.fast; controls.ffOn = emu.fast },
             Row("pad", "Controles") { controlsMenu() },
             Row("restart", "Reiniciar jogo") { emu.reset(); emu.applyCheats(cheats) },
             Row("home", "Voltar à biblioteca") { finish() },
